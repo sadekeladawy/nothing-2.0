@@ -1,0 +1,51 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Drop shadow / outer aura -->
+    <path
+        android:pathData="M26,45 C26,38 31,33 38,33 L70,33 C77,33 82,38 82,45 L82,63 C82,70 77,75 70,75 L38,75 C31,75 26,70 26,63 Z"
+        android:fillColor="#15FFFFFF" />
+
+    <!-- Main Capsule Pill Body -->
+    <path
+        android:pathData="M28,47 C28,41 33,36 40,36 L68,36 C75,36 80,41 80,47 L80,61 C80,67 75,72 68,72 L40,72 C33,72 28,67 28,61 Z"
+        android:fillColor="#000000"
+        android:strokeWidth="1.2"
+        android:strokeColor="#33FFFFFF" />
+
+    <!-- Camera Cutout Dot -->
+    <path
+        android:pathData="M37,54 A4,4 0 1 1 37,53.9"
+        android:fillColor="#1A1C23"
+        android:strokeWidth="0.8"
+        android:strokeColor="#2E3440" />
+    <path
+        android:pathData="M37,54 A1.5,1.5 0 1 1 37,53.9"
+        android:fillColor="#0F172A" />
+
+    <!-- Audio Wave Bars on the right side of the Dynamic Island -->
+    <path
+        android:pathData="M59,57 L59,51"
+        android:strokeWidth="2.0"
+        android:strokeColor="#22C55E"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M64,60 L64,48"
+        android:strokeWidth="2.0"
+        android:strokeColor="#3B82F6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M69,56 L69,52"
+        android:strokeWidth="2.0"
+        android:strokeColor="#A855F7"
+        android:strokeLineCap="round" />
+
+    <!-- Subtle music note / dot accent -->
+    <path
+        android:pathData="M49,54 A2,2 0 1 1 49,53.9"
+        android:fillColor="#60A5FA" />
+</vector>
+

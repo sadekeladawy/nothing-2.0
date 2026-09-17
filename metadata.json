@@ -1,0 +1,7 @@
+{
+  "name": "Dynamic Island",
+  "description": "Fluid Dynamic Island overlay with responsive media controls, notification banners, and glassmorphism styling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
