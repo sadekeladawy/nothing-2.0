@@ -76,5 +76,44 @@ class ExampleRobolectricTest {
         IslandStateManager.collapseToIdle()
         assertEquals(IslandMode.IDLE, IslandStateManager.islandMode.value)
     }
+
+    @Test
+    fun `test full-screen video auto-hide configuration and behavior`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // Initialize preferences
+        IslandStateManager.initPreferences(context)
+
+        // Enable auto-hide
+        IslandStateManager.setAutoHideInFullScreenVideo(true, context)
+        assertTrue(IslandStateManager.autoHideInFullScreenVideo.value)
+
+        // When no full-screen video is active, island should not be hidden
+        IslandStateManager.setFullScreenVideoActive(false)
+        assertEquals(false, IslandStateManager.shouldHideIsland.value)
+
+        // When full-screen video starts, island should automatically be hidden
+        IslandStateManager.setFullScreenVideoActive(true)
+        assertTrue(IslandStateManager.isFullScreenVideoActive.value)
+        assertTrue(IslandStateManager.shouldHideIsland.value)
+
+        // When user disables the auto-hide setting, island should not be hidden even during video
+        IslandStateManager.setAutoHideInFullScreenVideo(false, context)
+        assertEquals(false, IslandStateManager.autoHideInFullScreenVideo.value)
+        assertEquals(false, IslandStateManager.shouldHideIsland.value)
+
+        // Test persistence: re-initialize from context
+        IslandStateManager.initPreferences(context)
+        assertEquals(false, IslandStateManager.autoHideInFullScreenVideo.value)
+
+        // Re-enable and verify persistence
+        IslandStateManager.setAutoHideInFullScreenVideo(true, context)
+        assertTrue(IslandStateManager.autoHideInFullScreenVideo.value)
+        assertTrue(IslandStateManager.shouldHideIsland.value)
+
+        // When video ends, island becomes visible again
+        IslandStateManager.setFullScreenVideoActive(false)
+        assertEquals(false, IslandStateManager.shouldHideIsland.value)
+    }
 }
 

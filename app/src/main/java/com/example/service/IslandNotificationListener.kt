@@ -32,12 +32,6 @@ class IslandNotificationListener : NotificationListenerService() {
     private var sessionsChangedListener: MediaSessionManager.OnActiveSessionsChangedListener? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // 5-second notification batching state
-    private val notificationBatch = mutableListOf<NotificationData>()
-    private var lastNotificationTimestamp = 0L
-    private val batchLock = Any()
-    private val BATCH_WINDOW_MS = 5000L
-
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
             super.onPlaybackStateChanged(state)
@@ -169,11 +163,15 @@ class IslandNotificationListener : NotificationListenerService() {
     }
 
     private fun cleanupMediaController() {
+        val prevPkg = activeMediaController?.packageName
         try {
             activeMediaController?.unregisterCallback(mediaControllerCallback)
         } catch (_: Exception) {
         }
         activeMediaController = null
+        if (prevPkg != null && VIDEO_PACKAGES.contains(prevPkg)) {
+            IslandStateManager.setFullScreenVideoActive(false)
+        }
     }
 
     private fun updateMediaFromController(controller: MediaController?) {
@@ -195,6 +193,16 @@ class IslandNotificationListener : NotificationListenerService() {
 
         val metadata = controller.metadata
         val isPlaying = state == PlaybackState.STATE_PLAYING
+
+        // Detect full-screen video apps or movie media
+        val isVideo = VIDEO_PACKAGES.contains(controller.packageName) ||
+            controller.playbackInfo?.audioAttributes?.contentType == android.media.AudioAttributes.CONTENT_TYPE_MOVIE
+        if (isVideo) {
+            IslandStateManager.setFullScreenVideoActive(isPlaying)
+        } else if (isPlaying && IslandStateManager.isFullScreenVideoActive.value) {
+            // If playing regular non-video audio, ensure video flag isn't stuck
+            IslandStateManager.setFullScreenVideoActive(false)
+        }
         val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
             ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
             ?: "Media Playing"
@@ -284,44 +292,7 @@ class IslandNotificationListener : NotificationListenerService() {
             timestamp = sbn.postTime
         )
 
-        // 5-second notification batching logic:
-        // If multiple notifications arrive within 5 seconds, batch them and show a numerical badge
-        // indicator on the Dynamic Island instead of force-expanding for every single alert.
-        val now = System.currentTimeMillis()
-        val isBatched: Boolean
-        val batchedData: NotificationData
-
-        synchronized(batchLock) {
-            val elapsed = now - lastNotificationTimestamp
-            if (notificationBatch.isNotEmpty() && elapsed <= BATCH_WINDOW_MS) {
-                // Arrived within 5 seconds: batch incoming notification
-                notificationBatch.add(notificationData)
-                isBatched = true
-                batchedData = notificationData.copy(
-                    badgeCount = notificationBatch.size,
-                    batchedNotifications = notificationBatch.toList()
-                )
-                lastNotificationTimestamp = now
-                Log.d(TAG, "Batched notification (${notificationBatch.size} in 5s): ${notificationData.title}")
-            } else {
-                // First notification or > 5s: start fresh batch
-                notificationBatch.clear()
-                notificationBatch.add(notificationData)
-                isBatched = false
-                batchedData = notificationData.copy(
-                    badgeCount = 1,
-                    batchedNotifications = listOf(notificationData)
-                )
-                lastNotificationTimestamp = now
-                Log.d(TAG, "First notification alert: ${notificationData.title}")
-            }
-        }
-
-        if (isBatched) {
-            IslandStateManager.postBatchedNotification(batchedData)
-        } else {
-            IslandStateManager.postNotification(batchedData)
-        }
+        IslandStateManager.postNotification(notificationData)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -338,11 +309,6 @@ class IslandNotificationListener : NotificationListenerService() {
                 cleanupMediaController()
                 IslandStateManager.clearMediaData()
             }
-        }
-
-        // 2. Remove from notification batch tracking
-        synchronized(batchLock) {
-            notificationBatch.removeAll { it.id == sbn.key }
         }
     }
 
@@ -362,5 +328,19 @@ class IslandNotificationListener : NotificationListenerService() {
 
     companion object {
         private const val TAG = "IslandNotifListener"
+
+        private val VIDEO_PACKAGES = setOf(
+            "com.google.android.youtube",
+            "com.netflix.mediaclient",
+            "com.amazon.avod.thirdpartyclient",
+            "org.videolan.vlc",
+            "com.mxtech.videoplayer.ad",
+            "com.mxtech.videoplayer.pro",
+            "com.disney.disneyplus",
+            "com.hulu.plus",
+            "tv.twitch.android.app",
+            "com.google.android.videos",
+            "com.plexapp.android"
+        )
     }
 }

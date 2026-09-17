@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.BlurCircular
 import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
@@ -105,6 +106,9 @@ fun CompanionScreen() {
     val yOffsetDp by IslandStateManager.yOffsetDp.collectAsState()
     val isOverlayRunning by IslandStateManager.isOverlayRunning.collectAsState()
     val islandMode by IslandStateManager.islandMode.collectAsState()
+    val autoHideInFullScreenVideo by IslandStateManager.autoHideInFullScreenVideo.collectAsState()
+    val isFullScreenVideoActive by IslandStateManager.isFullScreenVideoActive.collectAsState()
+    val shouldHideIsland by IslandStateManager.shouldHideIsland.collectAsState()
 
     // Permission tracking state refreshed on app resume
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -269,6 +273,34 @@ fun CompanionScreen() {
                                 .offset(x = xOffsetDp.dp, y = (yOffsetDp + 6).dp)
                         ) {
                             DynamicIsland(isInteractive = true)
+                        }
+
+                        // Status notification when island is auto-hidden for full-screen video
+                        if (shouldHideIsland) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color(0xE60F172A))
+                                    .border(1.dp, Color(0x3338BDF8), RoundedCornerShape(16.dp))
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Fullscreen,
+                                        contentDescription = null,
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Island Hidden (Full-Screen Video Mode Active)",
+                                        color = Color(0xFFE2E8F0),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -574,7 +606,84 @@ fun CompanionScreen() {
                 }
             }
 
-            // 6. Interactive State Simulator (Requirement 5)
+            // 6. Full-Screen Video Auto-Hide Setting
+            Text(
+                text = "FULL-SCREEN VIDEO PLAYBACK",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF6B7280),
+                modifier = Modifier.padding(start = 24.dp, top = 18.dp, bottom = 6.dp)
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF161924))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Fullscreen,
+                                contentDescription = "Full-Screen Video Setting",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column {
+                            Text(
+                                text = "Hide in Full-Screen Video",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Automatically hides the Dynamic Island during full-screen video playback to ensure it does not obstruct media content.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Switch(
+                        checked = autoHideInFullScreenVideo,
+                        onCheckedChange = { enabled ->
+                            IslandStateManager.setAutoHideInFullScreenVideo(enabled, context)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF3B82F6)
+                        ),
+                        modifier = Modifier.testTag("switch_auto_hide_video")
+                    )
+                }
+            }
+
+            // 7. Interactive State Simulator (Requirement 5)
             Text(
                 text = "TEST SIMULATOR",
                 fontSize = 12.sp,
@@ -665,6 +774,31 @@ fun CompanionScreen() {
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Idle", fontSize = 12.sp)
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    FilledTonalButton(
+                        onClick = { IslandStateManager.toggleFullScreenVideoSimulation() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("btn_simulate_fullscreen_video"),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = if (isFullScreenVideoActive) Color(0xFF1E3A8A) else Color(0xFF1E293B),
+                            contentColor = if (isFullScreenVideoActive) Color(0xFF60A5FA) else Color(0xFFCBD5E1)
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Fullscreen,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isFullScreenVideoActive) "Video Playing (Active: Tap to Exit)" else "Simulate Full-Screen Video Playback",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
             }

@@ -1,6 +1,7 @@
 package com.example.state
 
 import android.app.PendingIntent
+import android.content.Context
 import com.example.model.GlassBlurEffect
 import com.example.model.IslandActiveState
 import com.example.model.IslandMode
@@ -59,6 +60,59 @@ object IslandStateManager {
 
     private val _isNotificationListenerConnected = MutableStateFlow(false)
     val isNotificationListenerConnected: StateFlow<Boolean> = _isNotificationListenerConnected.asStateFlow()
+
+    // Full-screen video configuration and state
+    private const val PREFS_NAME = "dynamic_island_preferences"
+    private const val KEY_AUTO_HIDE_FS_VIDEO = "auto_hide_in_fullscreen_video"
+
+    // Configuration setting: Automatically hide the Dynamic Island during full-screen video playback
+    private val _autoHideInFullScreenVideo = MutableStateFlow(true)
+    val autoHideInFullScreenVideo: StateFlow<Boolean> = _autoHideInFullScreenVideo.asStateFlow()
+
+    // Runtime state: whether full-screen video/media playback is currently active
+    private val _isFullScreenVideoActive = MutableStateFlow(false)
+    val isFullScreenVideoActive: StateFlow<Boolean> = _isFullScreenVideoActive.asStateFlow()
+
+    // Evaluated flag: whether the island should currently be hidden to not obstruct video content
+    private val _shouldHideIsland = MutableStateFlow(false)
+    val shouldHideIsland: StateFlow<Boolean> = _shouldHideIsland.asStateFlow()
+
+    private fun recomputeShouldHide() {
+        _shouldHideIsland.value = _autoHideInFullScreenVideo.value && _isFullScreenVideoActive.value
+    }
+
+    fun setAutoHideInFullScreenVideo(enabled: Boolean, context: Context? = null) {
+        _autoHideInFullScreenVideo.value = enabled
+        recomputeShouldHide()
+        context?.let { ctx ->
+            try {
+                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(KEY_AUTO_HIDE_FS_VIDEO, enabled)
+                    .apply()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun setFullScreenVideoActive(active: Boolean) {
+        _isFullScreenVideoActive.value = active
+        recomputeShouldHide()
+    }
+
+    fun toggleFullScreenVideoSimulation() {
+        setFullScreenVideoActive(!_isFullScreenVideoActive.value)
+    }
+
+    fun initPreferences(context: Context) {
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val autoHide = prefs.getBoolean(KEY_AUTO_HIDE_FS_VIDEO, true)
+            _autoHideInFullScreenVideo.value = autoHide
+            recomputeShouldHide()
+        } catch (_: Exception) {
+        }
+    }
 
     fun setTheme(theme: IslandTheme) {
         _islandTheme.value = theme
@@ -144,38 +198,8 @@ object IslandStateManager {
         }
     }
 
-    /**
-     * Updates notification when batched within the 5-second window.
-     * Shows a numerical badge indicator without force-expanding for every single alert.
-     */
-    fun postBatchedNotification(notification: NotificationData) {
-        _activeNotification.value = notification
-
-        if (_activeState.value !is IslandActiveState.ShowingNotification) {
-            _activeState.value = IslandActiveState.ShowingNotification(isExpanded = false)
-            _islandMode.value = IslandMode.NOTIFICATION
-        } else {
-            // If already showing, preserve current compact/expanded status without force-expanding
-            val currentState = _activeState.value as IslandActiveState.ShowingNotification
-            if (currentState.isExpanded) {
-                _islandMode.value = IslandMode.NOTIFICATION_EXPANDED
-            } else {
-                _islandMode.value = IslandMode.NOTIFICATION
-            }
-        }
-
-        notificationDismissJob?.cancel()
-        notificationDismissJob = scope.launch {
-            delay(5000)
-            if (_activeState.value == IslandActiveState.ShowingNotification(isExpanded = false)) {
-                dismissNotificationBanner()
-            }
-        }
-    }
-
     fun dismissNotificationBanner() {
         notificationDismissJob?.cancel()
-        simBatch.clear()
         _activeNotification.value = null
         if (_mediaData.value != null && _mediaData.value?.isPlaying == true) {
             _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
@@ -326,68 +350,29 @@ object IslandStateManager {
         }
     }
 
-    private val simBatch = mutableListOf<NotificationData>()
-    private var lastSimTimestamp = 0L
-
     fun simulateNotification(
         title: String = "Sarah Jenkins",
         message: String = "Hey! Let's grab lunch at 12:30? 🍜",
         pkg: String = "com.whatsapp"
     ) {
-        val now = System.currentTimeMillis()
-        val elapsed = now - lastSimTimestamp
-        val sampleTitles = listOf("Sarah Jenkins", "Alex Rivera", "Slack • Design", "Emma Watson", "Uber Eats")
-        val sampleMessages = listOf(
-            "Hey! Let's grab lunch at 12:30? 🍜",
-            "Can you review the latest Figma prototype?",
-            "Meeting starting in 5 minutes 📅",
-            "Are you free this weekend?",
-            "Your courier is arriving in 2 mins 🚴"
+        val notif = NotificationData(
+            id = System.currentTimeMillis().toString(),
+            title = title,
+            text = message,
+            packageName = pkg,
+            appIcon = null,
+            contentIntent = null,
+            timestamp = System.currentTimeMillis()
         )
-        val samplePkgs = listOf("com.whatsapp", "com.slack", "com.slack", "com.whatsapp", "com.ubercab.eats")
-
-        if (simBatch.isNotEmpty() && elapsed <= 5000L) {
-            val nextIdx = simBatch.size % sampleTitles.size
-            val nextItem = NotificationData(
-                id = System.currentTimeMillis().toString(),
-                title = sampleTitles[nextIdx],
-                text = sampleMessages[nextIdx],
-                packageName = samplePkgs[nextIdx],
-                appIcon = null,
-                contentIntent = null,
-                timestamp = now
-            )
-            simBatch.add(nextItem)
-            val batched = nextItem.copy(
-                badgeCount = simBatch.size,
-                batchedNotifications = simBatch.toList()
-            )
-            lastSimTimestamp = now
-            postBatchedNotification(batched)
-        } else {
-            simBatch.clear()
-            val firstItem = NotificationData(
-                id = System.currentTimeMillis().toString(),
-                title = title,
-                text = message,
-                packageName = pkg,
-                appIcon = null,
-                contentIntent = null,
-                timestamp = now
-            )
-            simBatch.add(firstItem)
-            lastSimTimestamp = now
-            postNotification(
-                firstItem.copy(badgeCount = 1, batchedNotifications = listOf(firstItem))
-            )
-        }
+        postNotification(notif)
     }
 
     fun simulateIdle() {
         notificationDismissJob?.cancel()
-        simBatch.clear()
         _activeNotification.value = null
         _mediaData.value = null
+        _isFullScreenVideoActive.value = false
+        recomputeShouldHide()
         _activeState.value = IslandActiveState.Idle
         _islandMode.value = IslandMode.IDLE
     }

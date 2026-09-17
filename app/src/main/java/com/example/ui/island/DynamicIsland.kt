@@ -107,6 +107,7 @@ fun DynamicIsland(
     val notificationData by IslandStateManager.activeNotification.collectAsState()
     val theme by IslandStateManager.islandTheme.collectAsState()
     val blurEffect by IslandStateManager.blurEffect.collectAsState()
+    val shouldHideIsland by IslandStateManager.shouldHideIsland.collectAsState()
 
     // Explicit Transition to coordinate bounds morphing independently of content layout
     val transition = updateTransition(targetState = mode, label = "dynamic_island_transition")
@@ -138,7 +139,7 @@ fun DynamicIsland(
             IslandMode.IDLE -> 34.dp
             IslandMode.MEDIA_COMPACT -> 38.dp
             IslandMode.NOTIFICATION -> 52.dp
-            IslandMode.NOTIFICATION_EXPANDED -> if ((notificationData?.badgeCount ?: 1) > 1) 184.dp else 156.dp
+            IslandMode.NOTIFICATION_EXPANDED -> 118.dp
             IslandMode.MEDIA_EXPANDED -> 192.dp
         }
     }
@@ -226,18 +227,33 @@ fun DynamicIsland(
             .testTag("dynamic_island_container"),
         contentAlignment = Alignment.TopCenter
     ) {
-        // Shadow/glow aura
-        Box(
-            modifier = Modifier
-                .wrapContentSize()
-                .background(Color.Transparent)
-                .shadow(
-                    elevation = if (isLucid) (if (isDeepBlur) 14.dp else 10.dp) else 8.dp,
-                    shape = capsuleShape,
-                    ambientColor = if (isLucid) Color(0x663B82F6) else Color(0xAA000000),
-                    spotColor = if (isLucid) Color(0x6660A5FA) else Color(0xFF000000)
-                )
+        AnimatedVisibility(
+            visible = !shouldHideIsland,
+            enter = fadeIn(
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+            ) + scaleIn(
+                initialScale = 0.8f,
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+            ),
+            exit = fadeOut(
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+            ) + scaleOut(
+                targetScale = 0.8f,
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+            )
         ) {
+            // Shadow/glow aura
+            Box(
+                modifier = Modifier
+                    .wrapContentSize()
+                    .background(Color.Transparent)
+                    .shadow(
+                        elevation = if (isLucid) (if (isDeepBlur) 14.dp else 10.dp) else 8.dp,
+                        shape = capsuleShape,
+                        ambientColor = if (isLucid) Color(0x663B82F6) else Color(0xAA000000),
+                        spotColor = if (isLucid) Color(0x6660A5FA) else Color(0xFF000000)
+                    )
+            ) {
             // Main Glass/Capsule Container: explicitly sized by updateTransition spring to eliminate WindowManager layout thrashing
             Box(
                 modifier = Modifier
@@ -368,6 +384,7 @@ fun DynamicIsland(
             }
         }
     }
+}
 }
 
 /**
@@ -522,8 +539,6 @@ private fun NotificationCapsule(
     notification: NotificationData?,
     onClick: () -> Unit
 ) {
-    val badgeCount = notification?.badgeCount ?: 1
-
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -536,59 +551,34 @@ private fun NotificationCapsule(
             .padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // App Icon / Avatar with optional badge dot if > 1
-        Box(
-            modifier = Modifier.wrapContentSize(),
-            contentAlignment = Alignment.TopEnd
-        ) {
-            if (notification?.appIcon != null) {
-                Image(
-                    bitmap = notification.appIcon.asImageBitmap(),
-                    contentDescription = "Notification Icon",
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .border(1.dp, Color(0x33FFFFFF), CircleShape)
+        // App Icon / Avatar
+        if (notification?.appIcon != null) {
+            Image(
+                bitmap = notification.appIcon.asImageBitmap(),
+                contentDescription = "Notification Icon",
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .border(1.dp, Color(0x33FFFFFF), CircleShape)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color(0xFF3B82F6), Color(0xFF6366F1))
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Notifications,
+                    contentDescription = "Notification",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
                 )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(Color(0xFF3B82F6), Color(0xFF6366F1))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = "Notification",
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-
-            if (badgeCount > 1) {
-                Box(
-                    modifier = Modifier
-                        .offset(x = 3.dp, y = (-2).dp)
-                        .size(16.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFEF4444))
-                        .border(1.5.dp, Color(0xFF0F172A), CircleShape)
-                        .testTag("avatar_badge_indicator"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (badgeCount > 9) "9+" else "$badgeCount",
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
             }
         }
 
@@ -618,31 +608,6 @@ private fun NotificationCapsule(
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
-        }
-
-        // Numerical badge indicator pill when multiple notifications arrive within 5 seconds
-        if (badgeCount > 1) {
-            Spacer(modifier = Modifier.width(6.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color(0xFFEF4444), Color(0xFFDC2626))
-                        )
-                    )
-                    .border(0.8.dp, Color(0x66FFFFFF), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                    .testTag("notification_badge_indicator"),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "+$badgeCount",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
         }
     }
 }
@@ -676,20 +641,14 @@ private fun ExpandedNotificationIsland(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = { /* Consumed: Card stays open when tapping inside */ }
+                    onClick = onOpenApp
                 )
                 .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Header: App icon, Title / Sender name, and package badge / timestamp (tapping launches app)
+            // Header: App icon, Title / Sender name, and package badge / timestamp
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onOpenApp
-                    ),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -746,42 +705,19 @@ private fun ExpandedNotificationIsland(
                     }
                 }
 
-                val badgeCount = notification?.badgeCount ?: 1
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                // Time / status pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x1FFFFFFF))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    if (badgeCount > 1) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFFEF4444))
-                                .padding(horizontal = 7.dp, vertical = 3.dp)
-                                .testTag("expanded_badge_indicator")
-                        ) {
-                            Text(
-                                text = "$badgeCount alerts",
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // Time / status pill
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0x1FFFFFFF))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "now",
-                            color = Color(0xFFCBD5E1),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+                    Text(
+                        text = "now",
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
 
@@ -790,68 +726,11 @@ private fun ExpandedNotificationIsland(
                 text = notification?.text ?: "",
                 color = Color(0xFFE2E8F0),
                 fontSize = 13.sp,
-                lineHeight = 17.sp,
-                maxLines = if (notification != null && notification.batchedNotifications.size > 1) 1 else 2,
+                lineHeight = 18.sp,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp)
+                modifier = Modifier.fillMaxWidth()
             )
-
-            // Batched prior notifications list (if multiple arrived within 5 seconds)
-            if (notification != null && notification.batchedNotifications.size > 1) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    notification.batchedNotifications.dropLast(1).takeLast(2).reversed().forEach { prev ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0x14FFFFFF))
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${prev.title}: ${prev.text}",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Bottom action affordance
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF2563EB))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = onOpenApp
-                        )
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = "Open App",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
         }
     }
 }

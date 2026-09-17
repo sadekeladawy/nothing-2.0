@@ -69,6 +69,7 @@ class IslandOverlayService : Service() {
         createNotificationChannel()
         startForegroundWithNotification()
 
+        IslandStateManager.initPreferences(this)
         setupOverlay()
         observeSettings()
 
@@ -221,6 +222,30 @@ class IslandOverlayService : Service() {
                     Log.e(TAG, "Failed to update WindowManager view layout for X offset", e)
                 }
             }
+        }
+
+        // Observe shouldHideIsland: when full-screen video playback is active and auto-hide is enabled,
+        // automatically hide the overlay view so it does not obstruct media content.
+        serviceScope.launch(Dispatchers.Main) {
+            IslandStateManager.shouldHideIsland.collect { hidden ->
+                val view = composeView ?: return@collect
+                val targetVisibility = if (hidden) View.GONE else View.VISIBLE
+                if (view.visibility != targetVisibility) {
+                    view.visibility = targetVisibility
+                    Log.d(TAG, "Dynamic Island overlay visibility updated: hidden=$hidden (visibility=$targetVisibility)")
+                }
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val isLandscape = newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val isMediaPlaying = IslandStateManager.mediaData.value?.isPlaying == true
+        if (isLandscape && isMediaPlaying) {
+            IslandStateManager.setFullScreenVideoActive(true)
+        } else if (!isLandscape && !isMediaPlaying) {
+            IslandStateManager.setFullScreenVideoActive(false)
         }
     }
 
