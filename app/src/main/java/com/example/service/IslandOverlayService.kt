@@ -33,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -118,12 +119,17 @@ class IslandOverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             x = initialX
             y = initialY
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
 
         this.layoutParams = params
@@ -132,6 +138,7 @@ class IslandOverlayService : Service() {
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(lifecycleOwner)
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
             setContent {
                 MyApplicationTheme(darkTheme = true) {
@@ -181,31 +188,40 @@ class IslandOverlayService : Service() {
     }
 
     private fun observeSettings() {
-        // Adjust both X and Y position dynamically whenever slider values change in the companion app.
-        // WindowManager.updateViewLayout is called on each change so the physical window moves on screen.
-        combine(IslandStateManager.xOffsetDp, IslandStateManager.yOffsetDp) { x, y ->
-            Pair(x, y)
-        }
-        .onEach { (xDp, yDp) ->
-            val view = composeView ?: return@onEach
-            val params = layoutParams ?: return@onEach
-            val newX = dpToPx(xDp)
-            val newY = dpToPx(yDp)
-
-            if (params.x != newX || params.y != newY) {
-                params.x = newX
+        // Observe X and Y position changes and immediately update WindowManager layout on the Main UI thread.
+        serviceScope.launch(Dispatchers.Main) {
+            IslandStateManager.yOffsetDp.collect { yDp ->
+                val view = composeView ?: return@collect
+                val params = layoutParams ?: return@collect
+                val newY = dpToPx(yDp)
                 params.y = newY
                 try {
                     if (view.isAttachedToWindow) {
                         windowManager?.updateViewLayout(view, params)
-                        Log.d(TAG, "WindowManager.updateViewLayout executed: x=$newX, y=$newY")
+                        Log.d(TAG, "WindowManager.updateViewLayout immediately updated Y: y=$newY")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to update WindowManager view layout", e)
+                    Log.e(TAG, "Failed to update WindowManager view layout for Y offset", e)
                 }
             }
         }
-        .launchIn(serviceScope)
+
+        serviceScope.launch(Dispatchers.Main) {
+            IslandStateManager.xOffsetDp.collect { xDp ->
+                val view = composeView ?: return@collect
+                val params = layoutParams ?: return@collect
+                val newX = dpToPx(xDp)
+                params.x = newX
+                try {
+                    if (view.isAttachedToWindow) {
+                        windowManager?.updateViewLayout(view, params)
+                        Log.d(TAG, "WindowManager.updateViewLayout immediately updated X: x=$newX")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to update WindowManager view layout for X offset", e)
+                }
+            }
+        }
     }
 
     private fun createNotificationChannel() {

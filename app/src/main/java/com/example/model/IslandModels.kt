@@ -87,5 +87,7 @@ data class NotificationData(
     val packageName: String,
     val appIcon: Bitmap? = null,
     val contentIntent: PendingIntent? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val badgeCount: Int = 1,
+    val batchedNotifications: List<NotificationData> = emptyList()
 )

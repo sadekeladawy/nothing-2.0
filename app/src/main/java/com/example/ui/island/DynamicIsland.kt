@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredWidth
@@ -66,6 +67,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -109,10 +111,10 @@ fun DynamicIsland(
     // Explicit Transition to coordinate bounds morphing independently of content layout
     val transition = updateTransition(targetState = mode, label = "dynamic_island_transition")
 
-    // Spring specification with Low Stiffness for authentic Apple fluid physics
+    // Spring specification for authentic Apple fluid physics: dampingRatio = 0.6f, stiffness = 300f
     val springSpec = spring<androidx.compose.ui.unit.Dp>(
-        dampingRatio = Spring.DampingRatioLowBouncy,
-        stiffness = Spring.StiffnessLow
+        dampingRatio = 0.6f,
+        stiffness = 300f
     )
 
     val capsuleWidth by transition.animateDp(
@@ -136,7 +138,7 @@ fun DynamicIsland(
             IslandMode.IDLE -> 34.dp
             IslandMode.MEDIA_COMPACT -> 38.dp
             IslandMode.NOTIFICATION -> 52.dp
-            IslandMode.NOTIFICATION_EXPANDED -> 156.dp
+            IslandMode.NOTIFICATION_EXPANDED -> if ((notificationData?.badgeCount ?: 1) > 1) 184.dp else 156.dp
             IslandMode.MEDIA_EXPANDED -> 192.dp
         }
     }
@@ -144,8 +146,8 @@ fun DynamicIsland(
     val cornerRadius by transition.animateDp(
         transitionSpec = {
             spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessLow
+                dampingRatio = 0.6f,
+                stiffness = 300f
             )
         },
         label = "capsule_corner_radius"
@@ -220,6 +222,7 @@ fun DynamicIsland(
     Box(
         modifier = modifier
             .wrapContentSize()
+            .background(Color.Transparent)
             .testTag("dynamic_island_container"),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -227,6 +230,7 @@ fun DynamicIsland(
         Box(
             modifier = Modifier
                 .wrapContentSize()
+                .background(Color.Transparent)
                 .shadow(
                     elevation = if (isLucid) (if (isDeepBlur) 14.dp else 10.dp) else 8.dp,
                     shape = capsuleShape,
@@ -234,31 +238,42 @@ fun DynamicIsland(
                     spotColor = if (isLucid) Color(0x6660A5FA) else Color(0xFF000000)
                 )
         ) {
-            // Main Glass/Capsule Body: explicitly sized by updateTransition spring to eliminate WindowManager layout thrashing
+            // Main Glass/Capsule Container: explicitly sized by updateTransition spring to eliminate WindowManager layout thrashing
             Box(
                 modifier = Modifier
                     .size(width = capsuleWidth, height = capsuleHeight)
                     .clip(capsuleShape)
-                    .then(
-                        if (isLucid) {
-                            Modifier.blur(blurEffect.blurRadiusDp.dp)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .background(brush = backgroundBrush)
                     .border(
                         width = if (isLucid) (if (isDeepBlur) 1.5.dp else 1.0.dp) else 0.8.dp,
                         brush = borderBrush,
                         shape = capsuleShape
                     )
             ) {
+                // Inner Glass Surface / Backdrop: STRICTLY and ONLY blur this backdrop Box, so the rest of the screen remains 100% clear!
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(capsuleShape)
+                        .then(
+                            if (isLucid) {
+                                Modifier.blur(
+                                    radius = blurEffect.blurRadiusDp.dp,
+                                    edgeTreatment = BlurredEdgeTreatment.Rectangle
+                                )
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .background(brush = backgroundBrush)
+                )
+
                 // Specular liquid highlight for Lucid theme
                 if (isLucid) {
                     val specularAlpha = if (isDeepBlur) 0.28f else 0.16f
                     Box(
                         modifier = Modifier
                             .matchParentSize()
+                            .clip(capsuleShape)
                             .background(
                                 Brush.radialGradient(
                                     colors = listOf(Color.White.copy(alpha = specularAlpha), Color.Transparent),
@@ -507,6 +522,8 @@ private fun NotificationCapsule(
     notification: NotificationData?,
     onClick: () -> Unit
 ) {
+    val badgeCount = notification?.badgeCount ?: 1
+
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -519,34 +536,59 @@ private fun NotificationCapsule(
             .padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // App Icon / Avatar
-        if (notification?.appIcon != null) {
-            Image(
-                bitmap = notification.appIcon.asImageBitmap(),
-                contentDescription = "Notification Icon",
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .border(1.dp, Color(0x33FFFFFF), CircleShape)
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(Color(0xFF3B82F6), Color(0xFF6366F1))
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Notifications,
-                    contentDescription = "Notification",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
+        // App Icon / Avatar with optional badge dot if > 1
+        Box(
+            modifier = Modifier.wrapContentSize(),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            if (notification?.appIcon != null) {
+                Image(
+                    bitmap = notification.appIcon.asImageBitmap(),
+                    contentDescription = "Notification Icon",
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, Color(0x33FFFFFF), CircleShape)
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF3B82F6), Color(0xFF6366F1))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Notification",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            if (badgeCount > 1) {
+                Box(
+                    modifier = Modifier
+                        .offset(x = 3.dp, y = (-2).dp)
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444))
+                        .border(1.5.dp, Color(0xFF0F172A), CircleShape)
+                        .testTag("avatar_badge_indicator"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (badgeCount > 9) "9+" else "$badgeCount",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
             }
         }
 
@@ -577,6 +619,31 @@ private fun NotificationCapsule(
                 overflow = TextOverflow.Ellipsis
             )
         }
+
+        // Numerical badge indicator pill when multiple notifications arrive within 5 seconds
+        if (badgeCount > 1) {
+            Spacer(modifier = Modifier.width(6.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color(0xFFEF4444), Color(0xFFDC2626))
+                        )
+                    )
+                    .border(0.8.dp, Color(0x66FFFFFF), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                    .testTag("notification_badge_indicator"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "+$badgeCount",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
     }
 }
 
@@ -599,7 +666,7 @@ private fun ExpandedNotificationIsland(
     AnimatedVisibility(
         visible = contentVisible,
         enter = fadeIn(animationSpec = tween(160, easing = LinearOutSlowInEasing)) +
-                scaleIn(initialScale = 0.94f, animationSpec = spring(stiffness = Spring.StiffnessLow)),
+                scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f)),
         exit = fadeOut(animationSpec = tween(80))
     ) {
         Column(
@@ -609,14 +676,20 @@ private fun ExpandedNotificationIsland(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = onOpenApp
+                    onClick = { /* Consumed: Card stays open when tapping inside */ }
                 )
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Header: App icon, Title / Sender name, and package badge / timestamp
+            // Header: App icon, Title / Sender name, and package badge / timestamp (tapping launches app)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onOpenApp
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -673,19 +746,42 @@ private fun ExpandedNotificationIsland(
                     }
                 }
 
-                // Time / status pill
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0x1FFFFFFF))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                val badgeCount = notification?.badgeCount ?: 1
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = "now",
-                        color = Color(0xFFCBD5E1),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    if (badgeCount > 1) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFFEF4444))
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                                .testTag("expanded_badge_indicator")
+                        ) {
+                            Text(
+                                text = "$badgeCount alerts",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Time / status pill
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x1FFFFFFF))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "now",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
@@ -694,13 +790,42 @@ private fun ExpandedNotificationIsland(
                 text = notification?.text ?: "",
                 color = Color(0xFFE2E8F0),
                 fontSize = 13.sp,
-                lineHeight = 18.sp,
-                maxLines = 2,
+                lineHeight = 17.sp,
+                maxLines = if (notification != null && notification.batchedNotifications.size > 1) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp)
+                    .padding(vertical = 2.dp)
             )
+
+            // Batched prior notifications list (if multiple arrived within 5 seconds)
+            if (notification != null && notification.batchedNotifications.size > 1) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    notification.batchedNotifications.dropLast(1).takeLast(2).reversed().forEach { prev ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0x14FFFFFF))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${prev.title}: ${prev.text}",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
 
             // Bottom action affordance
             Row(
@@ -712,7 +837,11 @@ private fun ExpandedNotificationIsland(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xFF2563EB))
-                        .clickable { onOpenApp() }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onOpenApp
+                        )
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Text(
@@ -750,7 +879,7 @@ private fun ExpandedMediaIsland(
     AnimatedVisibility(
         visible = contentVisible,
         enter = fadeIn(animationSpec = tween(160, easing = LinearOutSlowInEasing)) +
-                scaleIn(initialScale = 0.95f, animationSpec = spring(stiffness = Spring.StiffnessLow)),
+                scaleIn(initialScale = 0.95f, animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f)),
         exit = fadeOut(animationSpec = tween(80))
     ) {
         Column(
@@ -760,16 +889,21 @@ private fun ExpandedMediaIsland(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = onOpenApp
+                    onClick = { /* Consumed: Island stays open when interacting with it */ }
                 )
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Row: Album Art and Track Info (Tapping anywhere launches the app)
+            // Top Row: Album Art and Track Info (Tapping explicitly on header launches the app)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clipToBounds(),
+                    .clipToBounds()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onOpenApp
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Album Artwork
@@ -857,6 +991,11 @@ private fun ExpandedMediaIsland(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clipToBounds()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { /* Consume clicks */ }
+                    )
             ) {
                 val progress = if (media != null && media.durationMs > 0) {
                     (media.positionMs.toFloat() / media.durationMs.toFloat()).coerceIn(0f, 1f)
@@ -897,7 +1036,13 @@ private fun ExpandedMediaIsland(
 
             // Transport Controls Row: Waveform on left, centered buttons, audio route on right (No Open button!)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { /* Consume clicks */ }
+                    ),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -910,14 +1055,26 @@ private fun ExpandedMediaIsland(
                     minHeight = 4.dp
                 )
 
-                // Center playback controls
+                // Center playback controls: Consume clicks completely to keep the island open
                 Row(
+                    modifier = Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { /* Consume clicks */ }
+                    ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    IconButton(
-                        onClick = { IslandStateManager.skipPrevious() },
-                        modifier = Modifier.size(36.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { IslandStateManager.skipPrevious() }
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipPrevious,
@@ -927,12 +1084,12 @@ private fun ExpandedMediaIsland(
                         )
                     }
 
-                    // Play / Pause big button with spring scale feedback
+                    // Play / Pause big button with iOS bounce spring scale feedback
                     val playButtonScale by animateFloatAsState(
                         targetValue = if (isPlaying) 1.05f else 1.0f,
                         animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
+                            dampingRatio = 0.6f,
+                            stiffness = 300f
                         ),
                         label = "play_button_scale"
                     )
@@ -943,7 +1100,11 @@ private fun ExpandedMediaIsland(
                             .scale(playButtonScale)
                             .clip(CircleShape)
                             .background(Color.White)
-                            .clickable { IslandStateManager.togglePlayPause() },
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { IslandStateManager.togglePlayPause() }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -954,9 +1115,16 @@ private fun ExpandedMediaIsland(
                         )
                     }
 
-                    IconButton(
-                        onClick = { IslandStateManager.skipNext() },
-                        modifier = Modifier.size(36.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { IslandStateManager.skipNext() }
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipNext,
@@ -972,7 +1140,12 @@ private fun ExpandedMediaIsland(
                     modifier = Modifier
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(Color(0x14FFFFFF)),
+                        .background(Color(0x14FFFFFF))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { /* Consume clicks */ }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

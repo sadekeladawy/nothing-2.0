@@ -12,6 +12,8 @@ import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -28,10 +30,24 @@ class IslandNotificationListener : NotificationListenerService() {
     private var mediaSessionManager: MediaSessionManager? = null
     private var activeMediaController: MediaController? = null
     private var sessionsChangedListener: MediaSessionManager.OnActiveSessionsChangedListener? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    // 5-second notification batching state
+    private val notificationBatch = mutableListOf<NotificationData>()
+    private var lastNotificationTimestamp = 0L
+    private val batchLock = Any()
+    private val BATCH_WINDOW_MS = 5000L
 
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
             super.onPlaybackStateChanged(state)
+            val currentState = state?.state
+            if (state == null || currentState == PlaybackState.STATE_STOPPED || currentState == PlaybackState.STATE_NONE) {
+                Log.d(TAG, "Playback state changed to stopped/none ($currentState). Reverting to Idle.")
+                cleanupMediaController()
+                IslandStateManager.clearMediaData()
+                return
+            }
             updateMediaFromController(activeMediaController)
         }
 
@@ -42,8 +58,9 @@ class IslandNotificationListener : NotificationListenerService() {
 
         override fun onSessionDestroyed() {
             super.onSessionDestroyed()
-            activeMediaController = null
-            IslandStateManager.updateMediaData(null)
+            Log.d(TAG, "MediaSession destroyed. Immediately reverting capsule state to Idle.")
+            cleanupMediaController()
+            IslandStateManager.clearMediaData()
         }
     }
 
@@ -62,7 +79,8 @@ class IslandNotificationListener : NotificationListenerService() {
 
             mediaSessionManager?.addOnActiveSessionsChangedListener(
                 sessionsChangedListener!!,
-                componentName
+                componentName,
+                mainHandler
             )
 
             // Initial query
@@ -88,35 +106,95 @@ class IslandNotificationListener : NotificationListenerService() {
     }
 
     private fun handleSessionsChanged(controllers: List<MediaController>?) {
-        // Pick the first controller that is currently playing, or fallback to the first active one
-        val preferred = controllers?.firstOrNull {
-            it.playbackState?.state == PlaybackState.STATE_PLAYING
-        } ?: controllers?.firstOrNull()
+        Log.d(TAG, "Active sessions changed: ${controllers?.size ?: 0} controller(s) reported")
 
-        if (preferred != activeMediaController) {
+        // 1. If the list of active controllers becomes empty, reset the UI state to Idle immediately
+        if (controllers.isNullOrEmpty()) {
+            Log.d(TAG, "Active controllers list is empty. Resetting capsule state to Idle.")
             cleanupMediaController()
-            activeMediaController = preferred
-            preferred?.registerCallback(mediaControllerCallback)
+            IslandStateManager.clearMediaData()
+            return
         }
 
-        updateMediaFromController(preferred)
+        // 2. If the specific controller we were tracking is removed, reset the UI state to Idle
+        val current = activeMediaController
+        if (current != null && controllers.none { it.sessionToken == current.sessionToken }) {
+            Log.d(TAG, "Tracked controller ${current.packageName} was removed from active sessions. Resetting to Idle.")
+            cleanupMediaController()
+            IslandStateManager.clearMediaData()
+            return
+        }
+
+        // 3. Find if any controller is actively playing
+        val preferred = controllers.firstOrNull {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        }
+
+        if (preferred == null) {
+            // Check if current tracked controller is still playing or active
+            val currentPlaybackState = activeMediaController?.playbackState?.state
+            if (currentPlaybackState == null ||
+                currentPlaybackState == PlaybackState.STATE_STOPPED ||
+                currentPlaybackState == PlaybackState.STATE_NONE
+            ) {
+                Log.d(TAG, "No controllers actively playing and current controller not playing. Resetting UI state to Idle.")
+                cleanupMediaController()
+                IslandStateManager.clearMediaData()
+                return
+            }
+        }
+
+        val targetController = preferred ?: activeMediaController ?: controllers.firstOrNull {
+            val s = it.playbackState?.state
+            s != PlaybackState.STATE_STOPPED && s != PlaybackState.STATE_NONE
+        }
+
+        if (targetController == null) {
+            cleanupMediaController()
+            IslandStateManager.clearMediaData()
+            return
+        }
+
+        if (targetController != activeMediaController) {
+            cleanupMediaController()
+            activeMediaController = targetController
+            try {
+                targetController.registerCallback(mediaControllerCallback, mainHandler)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error registering MediaController callback", e)
+            }
+        }
+
+        updateMediaFromController(targetController)
     }
 
     private fun cleanupMediaController() {
-        activeMediaController?.unregisterCallback(mediaControllerCallback)
+        try {
+            activeMediaController?.unregisterCallback(mediaControllerCallback)
+        } catch (_: Exception) {
+        }
         activeMediaController = null
     }
 
     private fun updateMediaFromController(controller: MediaController?) {
         if (controller == null) {
-            // No media controller active, do not overwrite if simulator is driving it
+            IslandStateManager.clearMediaData()
+            return
+        }
+
+        val playbackState = controller.playbackState
+        val state = playbackState?.state
+
+        // If the playback state is stopped or none, revert immediately to Idle
+        if (state == null || state == PlaybackState.STATE_STOPPED || state == PlaybackState.STATE_NONE) {
+            Log.d(TAG, "updateMediaFromController: PlaybackState is null, STOPPED or NONE ($state). Reverting to Idle.")
+            cleanupMediaController()
+            IslandStateManager.clearMediaData()
             return
         }
 
         val metadata = controller.metadata
-        val playbackState = controller.playbackState
-
-        val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
+        val isPlaying = state == PlaybackState.STATE_PLAYING
         val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
             ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
             ?: "Media Playing"
@@ -169,10 +247,6 @@ class IslandNotificationListener : NotificationListenerService() {
 
         val notification = sbn.notification ?: return
 
-        // Ignore ongoing background service notifications (e.g. download in progress, pedometer) unless flagged
-        val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
-        val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
-
         // Extract title and text
         val extras = notification.extras ?: return
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
@@ -210,12 +284,66 @@ class IslandNotificationListener : NotificationListenerService() {
             timestamp = sbn.postTime
         )
 
-        IslandStateManager.postNotification(notificationData)
+        // 5-second notification batching logic:
+        // If multiple notifications arrive within 5 seconds, batch them and show a numerical badge
+        // indicator on the Dynamic Island instead of force-expanding for every single alert.
+        val now = System.currentTimeMillis()
+        val isBatched: Boolean
+        val batchedData: NotificationData
+
+        synchronized(batchLock) {
+            val elapsed = now - lastNotificationTimestamp
+            if (notificationBatch.isNotEmpty() && elapsed <= BATCH_WINDOW_MS) {
+                // Arrived within 5 seconds: batch incoming notification
+                notificationBatch.add(notificationData)
+                isBatched = true
+                batchedData = notificationData.copy(
+                    badgeCount = notificationBatch.size,
+                    batchedNotifications = notificationBatch.toList()
+                )
+                lastNotificationTimestamp = now
+                Log.d(TAG, "Batched notification (${notificationBatch.size} in 5s): ${notificationData.title}")
+            } else {
+                // First notification or > 5s: start fresh batch
+                notificationBatch.clear()
+                notificationBatch.add(notificationData)
+                isBatched = false
+                batchedData = notificationData.copy(
+                    badgeCount = 1,
+                    batchedNotifications = listOf(notificationData)
+                )
+                lastNotificationTimestamp = now
+                Log.d(TAG, "First notification alert: ${notificationData.title}")
+            }
+        }
+
+        if (isBatched) {
+            IslandStateManager.postBatchedNotification(batchedData)
+        } else {
+            IslandStateManager.postNotification(batchedData)
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
-        // If current active notification matches, we can let the timer or user handle dismissal
+        if (sbn == null) return
+
+        // 1. Check if media notification for current package was removed (e.g. user swiped away Spotify)
+        val currentPkg = activeMediaController?.packageName
+        if (currentPkg != null && sbn.packageName == currentPkg) {
+            Log.d(TAG, "Notification for active media package $currentPkg was removed. Checking active playback.")
+            val state = activeMediaController?.playbackState?.state
+            if (state != PlaybackState.STATE_PLAYING) {
+                Log.d(TAG, "Media notification removed and playback is not active. Reverting to Idle.")
+                cleanupMediaController()
+                IslandStateManager.clearMediaData()
+            }
+        }
+
+        // 2. Remove from notification batch tracking
+        synchronized(batchLock) {
+            notificationBatch.removeAll { it.id == sbn.key }
+        }
     }
 
     private fun drawableToBitmap(drawable: Drawable?): Bitmap? {
