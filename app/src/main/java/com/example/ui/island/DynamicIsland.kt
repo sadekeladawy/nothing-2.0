@@ -1,14 +1,24 @@
 package com.example.ui.island
 
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,14 +34,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
@@ -39,31 +51,38 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.GlassBlurEffect
 import com.example.model.IslandMode
 import com.example.model.IslandTheme
 import com.example.model.MediaData
@@ -80,36 +99,88 @@ fun DynamicIsland(
     modifier: Modifier = Modifier,
     isInteractive: Boolean = true
 ) {
+    val context = LocalContext.current
     val mode by IslandStateManager.islandMode.collectAsState()
     val mediaData by IslandStateManager.mediaData.collectAsState()
     val notificationData by IslandStateManager.activeNotification.collectAsState()
     val theme by IslandStateManager.islandTheme.collectAsState()
+    val blurEffect by IslandStateManager.blurEffect.collectAsState()
 
-    // Authentic iPhone dynamic island spring physics
-    val bouncySpring = spring<androidx.compose.ui.unit.IntSize>(
+    // Explicit Transition to coordinate bounds morphing independently of content layout
+    val transition = updateTransition(targetState = mode, label = "dynamic_island_transition")
+
+    // Spring specification with Low Stiffness for authentic Apple fluid physics
+    val springSpec = spring<androidx.compose.ui.unit.Dp>(
         dampingRatio = Spring.DampingRatioLowBouncy,
         stiffness = Spring.StiffnessLow
     )
 
-    // Dynamic Corner Radius depending on state
-    val cornerRadius = when (mode) {
-        IslandMode.MEDIA_EXPANDED -> 36.dp
-        IslandMode.NOTIFICATION -> 26.dp
-        else -> 22.dp
+    val capsuleWidth by transition.animateDp(
+        transitionSpec = { springSpec },
+        label = "capsule_width"
+    ) { targetMode ->
+        when (targetMode) {
+            IslandMode.IDLE -> 116.dp
+            IslandMode.MEDIA_COMPACT -> 216.dp
+            IslandMode.NOTIFICATION -> 312.dp
+            IslandMode.NOTIFICATION_EXPANDED -> 344.dp
+            IslandMode.MEDIA_EXPANDED -> 344.dp
+        }
+    }
+
+    val capsuleHeight by transition.animateDp(
+        transitionSpec = { springSpec },
+        label = "capsule_height"
+    ) { targetMode ->
+        when (targetMode) {
+            IslandMode.IDLE -> 34.dp
+            IslandMode.MEDIA_COMPACT -> 38.dp
+            IslandMode.NOTIFICATION -> 52.dp
+            IslandMode.NOTIFICATION_EXPANDED -> 156.dp
+            IslandMode.MEDIA_EXPANDED -> 192.dp
+        }
+    }
+
+    val cornerRadius by transition.animateDp(
+        transitionSpec = {
+            spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessLow
+            )
+        },
+        label = "capsule_corner_radius"
+    ) { targetMode ->
+        when (targetMode) {
+            IslandMode.MEDIA_EXPANDED -> 36.dp
+            IslandMode.NOTIFICATION_EXPANDED -> 30.dp
+            IslandMode.NOTIFICATION -> 26.dp
+            IslandMode.MEDIA_COMPACT -> 20.dp
+            IslandMode.IDLE -> 17.dp
+        }
     }
 
     val capsuleShape = RoundedCornerShape(cornerRadius)
 
-    // Capsule styling according to selected visual theme
+    // Capsule styling according to selected visual theme & glassmorphism blur effect
     val isLucid = theme == IslandTheme.LUCID
+    val isDeepBlur = blurEffect == GlassBlurEffect.DEEP
 
     val backgroundBrush = if (isLucid) {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0x991E2230),
-                Color(0x80131622)
+        if (isDeepBlur) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xD91B2030), // Deep frosted glass backdrop
+                    Color(0xC4111422)
+                )
             )
-        )
+        } else {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0x801E2230), // Light crisp glass translucency
+                    Color(0x66131622)
+                )
+            )
+        }
     } else {
         Brush.verticalGradient(
             colors = listOf(
@@ -120,13 +191,23 @@ fun DynamicIsland(
     }
 
     val borderBrush = if (isLucid) {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0x66FFFFFF),
-                Color(0x22FFFFFF),
-                Color(0x0DFFFFFF)
+        if (isDeepBlur) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0x8CFFFFFF),
+                    Color(0x38FFFFFF),
+                    Color(0x14FFFFFF)
+                )
             )
-        )
+        } else {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0x66FFFFFF),
+                    Color(0x22FFFFFF),
+                    Color(0x0DFFFFFF)
+                )
+            )
+        }
     } else {
         Brush.verticalGradient(
             colors = listOf(
@@ -147,70 +228,72 @@ fun DynamicIsland(
             modifier = Modifier
                 .wrapContentSize()
                 .shadow(
-                    elevation = if (isLucid) 12.dp else 8.dp,
+                    elevation = if (isLucid) (if (isDeepBlur) 14.dp else 10.dp) else 8.dp,
                     shape = capsuleShape,
                     ambientColor = if (isLucid) Color(0x663B82F6) else Color(0xAA000000),
                     spotColor = if (isLucid) Color(0x6660A5FA) else Color(0xFF000000)
                 )
         ) {
-            // Main Glass/Capsule Body
+            // Main Glass/Capsule Body: explicitly sized by updateTransition spring to eliminate WindowManager layout thrashing
             Box(
                 modifier = Modifier
+                    .size(width = capsuleWidth, height = capsuleHeight)
                     .clip(capsuleShape)
                     .then(
                         if (isLucid) {
-                            Modifier.blur(1.dp) // Subtle Compose-level soft diffusion
+                            Modifier.blur(blurEffect.blurRadiusDp.dp)
                         } else {
                             Modifier
                         }
                     )
                     .background(brush = backgroundBrush)
                     .border(
-                        width = if (isLucid) 1.2.dp else 0.8.dp,
+                        width = if (isLucid) (if (isDeepBlur) 1.5.dp else 1.0.dp) else 0.8.dp,
                         brush = borderBrush,
                         shape = capsuleShape
                     )
-                    .animateContentSize(animationSpec = bouncySpring)
             ) {
                 // Specular liquid highlight for Lucid theme
                 if (isLucid) {
+                    val specularAlpha = if (isDeepBlur) 0.28f else 0.16f
                     Box(
                         modifier = Modifier
                             .matchParentSize()
                             .background(
                                 Brush.radialGradient(
-                                    colors = listOf(Color(0x1FFFFFFF), Color.Transparent),
-                                    radius = 350f
+                                    colors = listOf(Color.White.copy(alpha = specularAlpha), Color.Transparent),
+                                    radius = if (isDeepBlur) 420f else 350f
                                 )
                             )
                     )
                 }
 
-                // Content transition between states
+                // Staggered crossfade: inner content transitions smoothly once capsule morph starts
                 AnimatedContent(
                     targetState = mode,
                     transitionSpec = {
                         fadeIn(
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessMedium
+                            animationSpec = tween(
+                                durationMillis = 180,
+                                delayMillis = 80,
+                                easing = LinearOutSlowInEasing
                             )
                         ) togetherWith fadeOut(
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessHigh
+                            animationSpec = tween(
+                                durationMillis = 80,
+                                easing = FastOutLinearInEasing
                             )
                         )
                     },
+                    contentAlignment = Alignment.Center,
                     label = "island_content_transition"
                 ) { currentMode ->
                     when (currentMode) {
                         IslandMode.IDLE -> {
                             IdleCapsule(
                                 onClick = {
-                                    // Quick demo tap: trigger Spotify simulation if idle
                                     if (isInteractive) {
-                                        IslandStateManager.simulateSpotifyPlaying(true)
+                                        IslandStateManager.onCapsuleTapped()
                                     }
                                 }
                             )
@@ -220,7 +303,7 @@ fun DynamicIsland(
                                 media = mediaData,
                                 onClick = {
                                     if (isInteractive) {
-                                        IslandStateManager.expandMedia()
+                                        IslandStateManager.onCapsuleTapped()
                                     }
                                 }
                             )
@@ -230,16 +313,22 @@ fun DynamicIsland(
                                 notification = notificationData,
                                 onClick = {
                                     if (isInteractive) {
-                                        try {
-                                            notificationData?.contentIntent?.send()
-                                        } catch (_: Exception) {
-                                        }
-                                        IslandStateManager.dismissNotificationBanner()
+                                        IslandStateManager.onCapsuleTapped()
                                     }
-                                },
-                                onDismiss = {
+                                }
+                            )
+                        }
+                        IslandMode.NOTIFICATION_EXPANDED -> {
+                            ExpandedNotificationIsland(
+                                notification = notificationData,
+                                onOpenApp = {
                                     if (isInteractive) {
-                                        IslandStateManager.dismissNotificationBanner()
+                                        launchSourceApp(
+                                            context = context,
+                                            pendingIntent = notificationData?.contentIntent,
+                                            packageName = notificationData?.packageName
+                                        )
+                                        IslandStateManager.collapseToIdle()
                                     }
                                 }
                             )
@@ -247,17 +336,14 @@ fun DynamicIsland(
                         IslandMode.MEDIA_EXPANDED -> {
                             ExpandedMediaIsland(
                                 media = mediaData,
-                                onCollapse = {
+                                onOpenApp = {
                                     if (isInteractive) {
-                                        IslandStateManager.collapseToPill()
-                                    }
-                                },
-                                onCardClick = {
-                                    if (isInteractive) {
-                                        try {
-                                            mediaData?.launchIntent?.send()
-                                        } catch (_: Exception) {
-                                        }
+                                        launchSourceApp(
+                                            context = context,
+                                            pendingIntent = mediaData?.launchIntent,
+                                            packageName = mediaData?.packageName
+                                        )
+                                        IslandStateManager.collapseToIdle()
                                     }
                                 }
                             )
@@ -278,8 +364,8 @@ private fun IdleCapsule(
 ) {
     Row(
         modifier = Modifier
-            .width(116.dp)
-            .height(34.dp)
+            .fillMaxSize()
+            .clipToBounds()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -318,6 +404,7 @@ private fun IdleCapsule(
 
 /**
  * 2. Media Compact State: Shows album art thumbnail and animated visualizer.
+ * Fixed required width and clipToBounds prevent letter-by-letter typing jitter.
  */
 @Composable
 private fun CompactMediaCapsule(
@@ -328,8 +415,8 @@ private fun CompactMediaCapsule(
 
     Row(
         modifier = Modifier
-            .width(210.dp)
-            .height(38.dp)
+            .fillMaxSize()
+            .clipToBounds()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -342,7 +429,10 @@ private fun CompactMediaCapsule(
         // Left: Album Art or Music disc
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .clipToBounds()
         ) {
             if (media?.albumArt != null) {
                 Image(
@@ -386,10 +476,15 @@ private fun CompactMediaCapsule(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(90.dp)
+                modifier = Modifier
+                    .widthIn(max = 110.dp)
+                    .clipToBounds()
             )
         }
+
+        Spacer(modifier = Modifier.width(6.dp))
 
         // Right: Animated Sound Wave Visualizer
         AudioVisualizer(
@@ -404,24 +499,24 @@ private fun CompactMediaCapsule(
 
 /**
  * 3. Notification State: Bouncy banner expanding to reveal sender and snippet.
+ * No explicit close button: tapping anywhere fires the notification intent and collapses to idle.
+ * Tapping outside collapses via FLAG_WATCH_OUTSIDE_TOUCH.
  */
 @Composable
 private fun NotificationCapsule(
     notification: NotificationData?,
-    onClick: () -> Unit,
-    onDismiss: () -> Unit
+    onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
-            .width(310.dp)
-            .height(52.dp)
+            .fillMaxSize()
+            .clipToBounds()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick
             )
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // App Icon / Avatar
@@ -459,7 +554,9 @@ private fun NotificationCapsule(
 
         // Message text
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .clipToBounds(),
             verticalArrangement = Arrangement.Center
         ) {
             Text(
@@ -468,6 +565,7 @@ private fun NotificationCapsule(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
@@ -475,256 +573,444 @@ private fun NotificationCapsule(
                 color = Color(0xFFD1D5DB),
                 fontSize = 11.sp,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        Spacer(modifier = Modifier.width(6.dp))
-
-        // Dismiss cross button
-        IconButton(
-            onClick = onDismiss,
-            modifier = Modifier.size(24.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Dismiss",
-                tint = Color(0x99FFFFFF),
-                modifier = Modifier.size(16.dp)
             )
         }
     }
 }
 
 /**
- * 4. Expanded Media Player State: Full dynamic island media card.
+ * 4. Expanded Notification State: Detailed card revealing full sender, snippet, and action.
+ * Uses AnimatedVisibility and delayed entrance to ensure the capsule smoothly morphs before content renders.
+ */
+@Composable
+private fun ExpandedNotificationIsland(
+    notification: NotificationData?,
+    onOpenApp: () -> Unit
+) {
+    var contentVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(70)
+        contentVisible = true
+    }
+
+    AnimatedVisibility(
+        visible = contentVisible,
+        enter = fadeIn(animationSpec = tween(160, easing = LinearOutSlowInEasing)) +
+                scaleIn(initialScale = 0.94f, animationSpec = spring(stiffness = Spring.StiffnessLow)),
+        exit = fadeOut(animationSpec = tween(80))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onOpenApp
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Header: App icon, Title / Sender name, and package badge / timestamp
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    if (notification?.appIcon != null) {
+                        Image(
+                            bitmap = notification.appIcon.asImageBitmap(),
+                            contentDescription = "App Icon",
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF3B82F6), Color(0xFF1D4ED8))
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = "Notification",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    Column {
+                        Text(
+                            text = notification?.title ?: "Notification",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = notification?.packageName?.substringAfterLast('.')
+                                ?.replaceFirstChar { it.uppercase() } ?: "System",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                // Time / status pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x1FFFFFFF))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "now",
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Body message text
+            Text(
+                text = notification?.text ?: "",
+                color = Color(0xFFE2E8F0),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            )
+
+            // Bottom action affordance
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF2563EB))
+                        .clickable { onOpenApp() }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Open App",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 5. Expanded Media Player State: Full dynamic island media card.
+ * - Uses AnimatedVisibility to smoothly reveal content after capsule bounds expand.
+ * - Entire capsule area is clickable to launch the source app and collapse to idle.
+ * - Close button and Open button removed for pure iOS feel.
+ * - Tap outside dismisses via WindowManager FLAG_WATCH_OUTSIDE_TOUCH.
  */
 @Composable
 private fun ExpandedMediaIsland(
     media: MediaData?,
-    onCollapse: () -> Unit,
-    onCardClick: () -> Unit
+    onOpenApp: () -> Unit
 ) {
     val isPlaying = media?.isPlaying == true
+    var contentVisible by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .width(330.dp)
-            .wrapContentHeight()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+    LaunchedEffect(Unit) {
+        delay(70)
+        contentVisible = true
+    }
+
+    AnimatedVisibility(
+        visible = contentVisible,
+        enter = fadeIn(animationSpec = tween(160, easing = LinearOutSlowInEasing)) +
+                scaleIn(initialScale = 0.95f, animationSpec = spring(stiffness = Spring.StiffnessLow)),
+        exit = fadeOut(animationSpec = tween(80))
     ) {
-        // Top Row: Album Art, Track Info, and Collapse Button
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
+                .clipToBounds()
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = onCardClick
-                ),
-            verticalAlignment = Alignment.CenterVertically
+                    onClick = onOpenApp
+                )
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Album Artwork
-            if (media?.albumArt != null) {
-                Image(
-                    bitmap = media.albumArt.asImageBitmap(),
-                    contentDescription = "Album Art",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(54.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(54.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            Brush.linearGradient(
-                                listOf(Color(0xFF1DB954), Color(0xFF191414))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.GraphicEq,
-                        contentDescription = "Spotify",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            // Track & Artist Column
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = media?.title ?: "Unknown Track",
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = media?.artist ?: "Unknown Artist",
-                    color = Color(0xFF9CA3AF),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Collapse action
-            IconButton(
-                onClick = onCollapse,
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color(0x22FFFFFF))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Collapse Capsule",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Progress Bar
-        Column(modifier = Modifier.fillMaxWidth()) {
-            val progress = if (media != null && media.durationMs > 0) {
-                (media.positionMs.toFloat() / media.durationMs.toFloat()).coerceIn(0f, 1f)
-            } else {
-                0.35f
-            }
-
-            LinearProgressIndicator(
-                progress = { progress },
+            // Top Row: Album Art and Track Info (Tapping anywhere launches the app)
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = Color(0xFF22C55E),
-                trackColor = Color(0x33FFFFFF)
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .clipToBounds(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = formatTime(if (media != null) media.positionMs else 64_000L),
-                    color = Color(0xFF6B7280),
-                    fontSize = 10.sp
-                )
-                Text(
-                    text = formatTime(if (media != null) media.durationMs else 200_000L),
-                    color = Color(0xFF6B7280),
-                    fontSize = 10.sp
-                )
-            }
-        }
+                // Album Artwork
+                if (media?.albumArt != null) {
+                    Image(
+                        bitmap = media.albumArt.asImageBitmap(),
+                        contentDescription = "Album Art",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF1DB954), Color(0xFF191414))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.GraphicEq,
+                            contentDescription = "Music",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
 
-        Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
-        // Transport Controls Row: Previous, Play/Pause, Next, Sound Visualizer
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Equalizer icon/bars on bottom-left
-            AudioVisualizer(
-                isPlaying = isPlaying,
-                barCount = 4,
-                barWidth = 3.dp,
-                maxHeight = 16.dp,
-                minHeight = 4.dp
-            )
-
-            // Center playback buttons
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                IconButton(
-                    onClick = { IslandStateManager.skipPrevious() },
-                    modifier = Modifier.size(36.dp)
+                // Track & Artist Column (clipToBounds + softWrap = false avoids any letter-by-letter jumping)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clipToBounds()
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.SkipPrevious,
-                        contentDescription = "Previous Track",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                    Text(
+                        text = media?.title ?: "Unknown Track",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = media?.artist ?: "Unknown Artist",
+                        color = Color(0xFF9CA3AF),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                // Play / Pause big button with spring scale feedback
-                val playButtonScale by animateFloatAsState(
-                    targetValue = if (isPlaying) 1.05f else 1.0f,
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                        stiffness = Spring.StiffnessLow
-                    ),
-                    label = "play_button_scale"
-                )
+                Spacer(modifier = Modifier.width(8.dp))
 
+                // Subtle music source indicator badge (no close button!)
                 Box(
                     modifier = Modifier
-                        .size(46.dp)
-                        .scale(playButtonScale)
+                        .size(28.dp)
                         .clip(CircleShape)
-                        .background(Color.White)
-                        .clickable { IslandStateManager.togglePlayPause() },
+                        .background(Color(0x1AFFFFFF)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = Color.Black,
-                        modifier = Modifier.size(26.dp)
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = Color(0xFF22C55E),
+                        modifier = Modifier.size(16.dp)
                     )
                 }
+            }
 
-                IconButton(
-                    onClick = { IslandStateManager.skipNext() },
-                    modifier = Modifier.size(36.dp)
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Progress Bar
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clipToBounds()
+            ) {
+                val progress = if (media != null && media.durationMs > 0) {
+                    (media.positionMs.toFloat() / media.durationMs.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0.35f
+                }
+
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = Color(0xFF22C55E),
+                    trackColor = Color(0x33FFFFFF)
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = formatTime(if (media != null) media.positionMs else 64_000L),
+                        color = Color(0xFF6B7280),
+                        fontSize = 10.sp
+                    )
+                    Text(
+                        text = formatTime(if (media != null) media.durationMs else 200_000L),
+                        color = Color(0xFF6B7280),
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Transport Controls Row: Waveform on left, centered buttons, audio route on right (No Open button!)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Equalizer wave visualizer on bottom-left
+                AudioVisualizer(
+                    isPlaying = isPlaying,
+                    barCount = 4,
+                    barWidth = 3.dp,
+                    maxHeight = 16.dp,
+                    minHeight = 4.dp
+                )
+
+                // Center playback controls
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    IconButton(
+                        onClick = { IslandStateManager.skipPrevious() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = "Previous Track",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    // Play / Pause big button with spring scale feedback
+                    val playButtonScale by animateFloatAsState(
+                        targetValue = if (isPlaying) 1.05f else 1.0f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        ),
+                        label = "play_button_scale"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .scale(playButtonScale)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .clickable { IslandStateManager.togglePlayPause() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.Black,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { IslandStateManager.skipNext() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = "Next Track",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                // Audio route output indicator icon (e.g. AirPlay / Audio output)
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x14FFFFFF)),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.SkipNext,
-                        contentDescription = "Next Track",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        imageVector = Icons.Default.VolumeUp,
+                        contentDescription = "Audio Output",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
+        }
+    }
+}
 
-            // Launch app hint (e.g. Spotify)
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0x22FFFFFF))
-                    .clickable(onClick = onCardClick)
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = "OPEN",
-                    color = Color(0xFF60A5FA),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
+/**
+ * Fires the source app's PendingIntent or opens its launch intent via PackageManager.
+ */
+private fun launchSourceApp(
+    context: Context,
+    pendingIntent: PendingIntent?,
+    packageName: String?
+) {
+    try {
+        if (pendingIntent != null) {
+            pendingIntent.send()
+            return
+        }
+    } catch (_: Exception) {
+    }
+
+    if (!packageName.isNullOrBlank()) {
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
             }
+        } catch (_: Exception) {
         }
     }
 }

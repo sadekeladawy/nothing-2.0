@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.app.NotificationCompat
@@ -32,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 
@@ -106,6 +108,7 @@ class IslandOverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val initialX = dpToPx(IslandStateManager.xOffsetDp.value)
         val initialY = dpToPx(IslandStateManager.yOffsetDp.value)
 
         val params = WindowManager.LayoutParams(
@@ -119,7 +122,7 @@ class IslandOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = 0
+            x = initialX
             y = initialY
         }
 
@@ -136,16 +139,36 @@ class IslandOverlayService : Service() {
                 }
             }
 
-            // Outside touch listener: when user touches outside the expanded island, collapse to pill!
+            // Outside touch listener: intercept ACTION_OUTSIDE to automatically collapse island when tapping outside
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                    if (IslandStateManager.islandMode.value == IslandMode.MEDIA_EXPANDED) {
+                    val currentMode = IslandStateManager.islandMode.value
+                    if (currentMode == IslandMode.MEDIA_EXPANDED) {
                         IslandStateManager.collapseToPill()
+                        return@setOnTouchListener true
+                    } else if (currentMode == IslandMode.NOTIFICATION) {
+                        IslandStateManager.dismissNotificationBanner()
                         return@setOnTouchListener true
                     }
                 }
                 false
             }
+
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {
+                    val p = this@IslandOverlayService.layoutParams ?: return
+                    p.x = dpToPx(IslandStateManager.xOffsetDp.value)
+                    p.y = dpToPx(IslandStateManager.yOffsetDp.value)
+                    try {
+                        windowManager?.updateViewLayout(v, p)
+                        Log.d(TAG, "Applied initial WindowManager layout on attach: x=${p.x}, y=${p.y}")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in onViewAttachedToWindow", e)
+                    }
+                }
+
+                override fun onViewDetachedFromWindow(v: View) {}
+            })
         }
 
         try {
@@ -158,18 +181,31 @@ class IslandOverlayService : Service() {
     }
 
     private fun observeSettings() {
-        // Adjust Y-position dynamically when user tweaks slider in companion app
-        IslandStateManager.yOffsetDp
-            .onEach { offsetDp ->
-                layoutParams?.let { params ->
-                    val newY = dpToPx(offsetDp)
-                    if (params.y != newY && composeView?.isAttachedToWindow == true) {
-                        params.y = newY
-                        windowManager?.updateViewLayout(composeView, params)
+        // Adjust both X and Y position dynamically whenever slider values change in the companion app.
+        // WindowManager.updateViewLayout is called on each change so the physical window moves on screen.
+        combine(IslandStateManager.xOffsetDp, IslandStateManager.yOffsetDp) { x, y ->
+            Pair(x, y)
+        }
+        .onEach { (xDp, yDp) ->
+            val view = composeView ?: return@onEach
+            val params = layoutParams ?: return@onEach
+            val newX = dpToPx(xDp)
+            val newY = dpToPx(yDp)
+
+            if (params.x != newX || params.y != newY) {
+                params.x = newX
+                params.y = newY
+                try {
+                    if (view.isAttachedToWindow) {
+                        windowManager?.updateViewLayout(view, params)
+                        Log.d(TAG, "WindowManager.updateViewLayout executed: x=$newX, y=$newY")
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to update WindowManager view layout", e)
                 }
             }
-            .launchIn(serviceScope)
+        }
+        .launchIn(serviceScope)
     }
 
     private fun createNotificationChannel() {

@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +32,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BlurCircular
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Layers
@@ -56,6 +60,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -81,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.example.model.GlassBlurEffect
 import com.example.model.IslandMode
 import com.example.model.IslandTheme
 import com.example.service.IslandOverlayService
@@ -94,6 +100,8 @@ fun CompanionScreen() {
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val theme by IslandStateManager.islandTheme.collectAsState()
+    val blurEffect by IslandStateManager.blurEffect.collectAsState()
+    val xOffsetDp by IslandStateManager.xOffsetDp.collectAsState()
     val yOffsetDp by IslandStateManager.yOffsetDp.collectAsState()
     val isOverlayRunning by IslandStateManager.isOverlayRunning.collectAsState()
     val islandMode by IslandStateManager.islandMode.collectAsState()
@@ -224,28 +232,41 @@ fun CompanionScreen() {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(210.dp)
+                            .height(220.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(
                                 Brush.verticalGradient(
                                     listOf(Color(0xFF1E2232), Color(0xFF161926))
                                 )
                             )
-                            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(18.dp)),
+                            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(18.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                // Tapping outside capsule in preview collapses it back (mirrors WindowManager ACTION_OUTSIDE)
+                                if (islandMode == IslandMode.MEDIA_EXPANDED || islandMode == IslandMode.NOTIFICATION_EXPANDED) {
+                                    IslandStateManager.collapseToPill()
+                                } else if (islandMode == IslandMode.NOTIFICATION) {
+                                    IslandStateManager.dismissNotificationBanner()
+                                }
+                            },
                         contentAlignment = Alignment.TopCenter
                     ) {
-                        // Simulated Punch hole indicator line
+                        // Simulated Punch hole indicator line/dot
                         Box(
                             modifier = Modifier
                                 .padding(top = 8.dp)
-                                .size(width = 80.dp, height = 2.dp)
+                                .size(width = 16.dp, height = 16.dp)
                                 .clip(CircleShape)
-                                .background(Color(0x33FFFFFF))
+                                .background(Color(0xFF0F121C))
+                                .border(1.dp, Color(0x44FFFFFF), CircleShape)
                         )
 
-                        // The actual animated Dynamic Island
+                        // The actual animated Dynamic Island with live X & Y offsets applied
                         Box(
-                            modifier = Modifier.padding(top = 16.dp)
+                            modifier = Modifier
+                                .offset(x = xOffsetDp.dp, y = (yOffsetDp + 6).dp)
                         ) {
                             DynamicIsland(isInteractive = true)
                         }
@@ -386,7 +407,55 @@ fun CompanionScreen() {
                 )
             }
 
-            // 5. Island Y-Offset Calibration
+            // 4b. Glassmorphism Blur Radius Setting (Light vs Deep)
+            Text(
+                text = "GLASSMORPHISM BLUR RADIUS",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF6B7280),
+                modifier = Modifier.padding(start = 24.dp, top = 18.dp, bottom = 6.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Light Blur Effect Option
+                BlurSelectionCard(
+                    title = "Light Blur",
+                    badge = "6 dp",
+                    subtitle = "Crisp, subtle frosted translucency",
+                    isSelected = blurEffect == GlassBlurEffect.LIGHT,
+                    icon = Icons.Default.BlurOn,
+                    modifier = Modifier.weight(1f),
+                    onSelect = {
+                        IslandStateManager.setBlurEffect(GlassBlurEffect.LIGHT)
+                        if (theme != IslandTheme.LUCID) {
+                            IslandStateManager.setTheme(IslandTheme.LUCID)
+                        }
+                    }
+                )
+
+                // Deep Blur Effect Option
+                BlurSelectionCard(
+                    title = "Deep Blur",
+                    badge = "20 dp",
+                    subtitle = "Rich, velvety heavy diffusion",
+                    isSelected = blurEffect == GlassBlurEffect.DEEP,
+                    icon = Icons.Default.BlurCircular,
+                    modifier = Modifier.weight(1f),
+                    onSelect = {
+                        IslandStateManager.setBlurEffect(GlassBlurEffect.DEEP)
+                        if (theme != IslandTheme.LUCID) {
+                            IslandStateManager.setTheme(IslandTheme.LUCID)
+                        }
+                    }
+                )
+            }
+
+            // 5. Island Alignment Calibration (X & Y Axis)
             Text(
                 text = "CAMERA CUTOUT ALIGNMENT",
                 fontSize = 12.sp,
@@ -403,20 +472,62 @@ fun CompanionScreen() {
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF161924))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Horizontal X-Offset
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Vertical Offset (Top Margin)",
+                            text = "Horizontal Offset (X-Axis)",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        val xLabel = when {
+                            xOffsetDp == 0 -> "0 dp (Centered)"
+                            xOffsetDp > 0 -> "+$xOffsetDp dp (Right)"
+                            else -> "$xOffsetDp dp (Left)"
+                        }
+                        Text(
+                            text = xLabel,
+                            color = Color(0xFF60A5FA),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Slider(
+                        value = xOffsetDp.toFloat(),
+                        onValueChange = { IslandStateManager.setXOffsetDp(it.toInt()) },
+                        valueRange = -60f..60f,
+                        steps = 120,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFF3B82F6),
+                            activeTrackColor = Color(0xFF3B82F6),
+                            inactiveTrackColor = Color(0xFF282F45)
+                        ),
+                        modifier = Modifier.testTag("x_offset_slider")
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Vertical Y-Offset
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Vertical Offset (Y-Axis)",
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "${yOffsetDp} dp",
+                            text = "$yOffsetDp dp",
                             color = Color(0xFF60A5FA),
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -424,8 +535,8 @@ fun CompanionScreen() {
                     Slider(
                         value = yOffsetDp.toFloat(),
                         onValueChange = { IslandStateManager.setYOffsetDp(it.toInt()) },
-                        valueRange = 0f..50f,
-                        steps = 50,
+                        valueRange = 0f..60f,
+                        steps = 60,
                         colors = SliderDefaults.colors(
                             thumbColor = Color(0xFF3B82F6),
                             activeTrackColor = Color(0xFF3B82F6),
@@ -434,11 +545,32 @@ fun CompanionScreen() {
                         modifier = Modifier.testTag("y_offset_slider")
                     )
 
-                    Text(
-                        text = "Calibrate the capsule vertically to fit precisely around your device's punch-hole camera.",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 11.sp
-                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Moves physical overlay via WindowManager.updateViewLayout in real time.",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        TextButton(
+                            onClick = { IslandStateManager.resetOffsets() },
+                            modifier = Modifier.testTag("reset_offsets_button")
+                        ) {
+                            Text(
+                                text = "Reset",
+                                color = Color(0xFF60A5FA),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                 }
             }
 
@@ -661,6 +793,87 @@ private fun ThemeSelectionCard(
                     tint = Color.White,
                     modifier = Modifier.size(18.dp)
                 )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = Color(0xFF94A3B8)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BlurSelectionCard(
+    title: String,
+    badge: String,
+    subtitle: String,
+    isSelected: Boolean,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onSelect: () -> Unit
+) {
+    Card(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onSelect)
+            .border(
+                width = if (isSelected) 1.5.dp else 1.dp,
+                color = if (isSelected) Color(0xFF38BDF8) else Color(0x1AFFFFFF),
+                shape = RoundedCornerShape(18.dp)
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) Color(0xFF0F243A) else Color(0xFF161924)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(if (isSelected) Color(0xFF0284C7) else Color(0x22FFFFFF)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) Color(0x3338BDF8) else Color(0x1AFFFFFF))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = badge,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isSelected) Color(0xFF7DD3FC) else Color(0xFF94A3B8)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))

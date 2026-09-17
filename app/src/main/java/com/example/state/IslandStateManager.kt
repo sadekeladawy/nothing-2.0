@@ -1,6 +1,8 @@
 package com.example.state
 
 import android.app.PendingIntent
+import com.example.model.GlassBlurEffect
+import com.example.model.IslandActiveState
 import com.example.model.IslandMode
 import com.example.model.IslandTheme
 import com.example.model.MediaData
@@ -24,6 +26,10 @@ object IslandStateManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var notificationDismissJob: Job? = null
 
+    // Explicit active state representation (Idle, ShowingMedia, ShowingNotification)
+    private val _activeState = MutableStateFlow<IslandActiveState>(IslandActiveState.Idle)
+    val activeState: StateFlow<IslandActiveState> = _activeState.asStateFlow()
+
     private val _islandMode = MutableStateFlow(IslandMode.IDLE)
     val islandMode: StateFlow<IslandMode> = _islandMode.asStateFlow()
 
@@ -35,6 +41,14 @@ object IslandStateManager {
 
     private val _islandTheme = MutableStateFlow(IslandTheme.CLASSIC_BLACK)
     val islandTheme: StateFlow<IslandTheme> = _islandTheme.asStateFlow()
+
+    // Glassmorphism blur effect preset for the overlay (Light vs Deep)
+    private val _blurEffect = MutableStateFlow(GlassBlurEffect.LIGHT)
+    val blurEffect: StateFlow<GlassBlurEffect> = _blurEffect.asStateFlow()
+
+    // Horizontal X-offset from screen center (in dp) for off-center or punch-hole alignment
+    private val _xOffsetDp = MutableStateFlow(0)
+    val xOffsetDp: StateFlow<Int> = _xOffsetDp.asStateFlow()
 
     // Vertical Y-offset from the top of the screen (in dp) to align with front camera notch/punch-hole
     private val _yOffsetDp = MutableStateFlow(12)
@@ -50,8 +64,21 @@ object IslandStateManager {
         _islandTheme.value = theme
     }
 
+    fun setBlurEffect(effect: GlassBlurEffect) {
+        _blurEffect.value = effect
+    }
+
+    fun setXOffsetDp(offset: Int) {
+        _xOffsetDp.value = offset.coerceIn(-120, 120)
+    }
+
     fun setYOffsetDp(offset: Int) {
-        _yOffsetDp.value = offset.coerceIn(0, 80)
+        _yOffsetDp.value = offset.coerceIn(0, 100)
+    }
+
+    fun resetOffsets() {
+        _xOffsetDp.value = 0
+        _yOffsetDp.value = 12
     }
 
     fun setOverlayRunning(running: Boolean) {
@@ -67,10 +94,17 @@ object IslandStateManager {
      */
     fun updateMediaData(media: MediaData?) {
         _mediaData.value = media
-        // If we are in IDLE and new media starts playing, transition smoothly to compact media
-        if (_islandMode.value == IslandMode.IDLE && media != null && media.isPlaying) {
-            _islandMode.value = IslandMode.MEDIA_COMPACT
-        } else if (_islandMode.value in listOf(IslandMode.MEDIA_COMPACT, IslandMode.MEDIA_EXPANDED) && media == null) {
+        // If notification is active, preserve it without interrupting
+        if (_activeState.value is IslandActiveState.ShowingNotification) {
+            return
+        }
+        if (media != null && media.isPlaying) {
+            if (_activeState.value is IslandActiveState.Idle) {
+                _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
+                _islandMode.value = IslandMode.MEDIA_COMPACT
+            }
+        } else if (media == null && _activeState.value is IslandActiveState.ShowingMedia) {
+            _activeState.value = IslandActiveState.Idle
             _islandMode.value = IslandMode.IDLE
         }
     }
@@ -80,13 +114,14 @@ object IslandStateManager {
      */
     fun postNotification(notification: NotificationData) {
         _activeNotification.value = notification
+        _activeState.value = IslandActiveState.ShowingNotification(isExpanded = false)
         _islandMode.value = IslandMode.NOTIFICATION
 
         notificationDismissJob?.cancel()
         notificationDismissJob = scope.launch {
-            // Auto dismiss notification banner after 4.5 seconds
+            // Auto dismiss notification banner after 4.5 seconds if not expanded
             delay(4500)
-            if (_islandMode.value == IslandMode.NOTIFICATION) {
+            if (_activeState.value == IslandActiveState.ShowingNotification(isExpanded = false)) {
                 dismissNotificationBanner()
             }
         }
@@ -96,9 +131,48 @@ object IslandStateManager {
         notificationDismissJob?.cancel()
         _activeNotification.value = null
         if (_mediaData.value != null && _mediaData.value?.isPlaying == true) {
+            _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
             _islandMode.value = IslandMode.MEDIA_COMPACT
         } else {
+            _activeState.value = IslandActiveState.Idle
             _islandMode.value = IslandMode.IDLE
+        }
+    }
+
+    /**
+     * Centralized capsule tap router.
+     * Checks active state:
+     * - If active data is a Notification, expands into Notification UI.
+     * - If active data is Media, expands into Media UI.
+     */
+    fun onCapsuleTapped() {
+        when (val state = _activeState.value) {
+            is IslandActiveState.ShowingNotification -> {
+                if (!state.isExpanded) {
+                    expandNotification()
+                }
+            }
+            is IslandActiveState.ShowingMedia -> {
+                if (!state.isExpanded) {
+                    expandMedia()
+                }
+            }
+            is IslandActiveState.Idle -> {
+                if (_mediaData.value != null) {
+                    expandMedia()
+                }
+            }
+        }
+    }
+
+    /**
+     * Expands notification banner into detailed notification card.
+     */
+    fun expandNotification() {
+        if (_activeNotification.value != null) {
+            notificationDismissJob?.cancel() // Cancel auto-dismiss while expanded
+            _activeState.value = IslandActiveState.ShowingNotification(isExpanded = true)
+            _islandMode.value = IslandMode.NOTIFICATION_EXPANDED
         }
     }
 
@@ -107,6 +181,7 @@ object IslandStateManager {
      */
     fun expandMedia() {
         if (_mediaData.value != null) {
+            _activeState.value = IslandActiveState.ShowingMedia(isExpanded = true)
             _islandMode.value = IslandMode.MEDIA_EXPANDED
         }
     }
@@ -115,11 +190,39 @@ object IslandStateManager {
      * Collapses back to compact pill or idle.
      */
     fun collapseToPill() {
-        if (_mediaData.value != null) {
-            _islandMode.value = IslandMode.MEDIA_COMPACT
-        } else {
-            _islandMode.value = IslandMode.IDLE
+        when (val state = _activeState.value) {
+            is IslandActiveState.ShowingNotification -> {
+                if (state.isExpanded) {
+                    _activeState.value = IslandActiveState.ShowingNotification(isExpanded = false)
+                    _islandMode.value = IslandMode.NOTIFICATION
+                } else {
+                    dismissNotificationBanner()
+                }
+            }
+            is IslandActiveState.ShowingMedia -> {
+                if (_mediaData.value != null) {
+                    _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
+                    _islandMode.value = IslandMode.MEDIA_COMPACT
+                } else {
+                    _activeState.value = IslandActiveState.Idle
+                    _islandMode.value = IslandMode.IDLE
+                }
+            }
+            is IslandActiveState.Idle -> {
+                _activeState.value = IslandActiveState.Idle
+                _islandMode.value = IslandMode.IDLE
+            }
         }
+    }
+
+    /**
+     * Collapses the island back directly to the idle state (e.g. after tapping to open the source app).
+     */
+    fun collapseToIdle() {
+        notificationDismissJob?.cancel()
+        _activeNotification.value = null
+        _activeState.value = IslandActiveState.Idle
+        _islandMode.value = IslandMode.IDLE
     }
 
     fun togglePlayPause() {
@@ -170,7 +273,10 @@ object IslandStateManager {
                 )
             }
         )
-        _islandMode.value = IslandMode.MEDIA_COMPACT
+        if (_activeState.value !is IslandActiveState.ShowingNotification) {
+            _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
+            _islandMode.value = IslandMode.MEDIA_COMPACT
+        }
     }
 
     fun simulateNotification(
@@ -194,6 +300,7 @@ object IslandStateManager {
         notificationDismissJob?.cancel()
         _activeNotification.value = null
         _mediaData.value = null
+        _activeState.value = IslandActiveState.Idle
         _islandMode.value = IslandMode.IDLE
     }
 }

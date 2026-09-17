@@ -60,6 +60,21 @@ class ExampleRobolectricTest {
         // Change Y Offset
         IslandStateManager.setYOffsetDp(24)
         assertEquals(24, IslandStateManager.yOffsetDp.value)
+
+        // Change X Offset
+        IslandStateManager.setXOffsetDp(18)
+        assertEquals(18, IslandStateManager.xOffsetDp.value)
+
+        // Reset Offsets
+        IslandStateManager.resetOffsets()
+        assertEquals(0, IslandStateManager.xOffsetDp.value)
+        assertEquals(12, IslandStateManager.yOffsetDp.value)
+
+        // Collapse to Idle directly
+        IslandStateManager.expandMedia()
+        assertEquals(IslandMode.MEDIA_EXPANDED, IslandStateManager.islandMode.value)
+        IslandStateManager.collapseToIdle()
+        assertEquals(IslandMode.IDLE, IslandStateManager.islandMode.value)
     }
 }
 

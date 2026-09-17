@@ -18,13 +18,45 @@ enum class IslandTheme(val displayName: String, val description: String) {
 }
 
 /**
+ * Glassmorphism blur radius presets for the Dynamic Island overlay.
+ */
+enum class GlassBlurEffect(
+    val displayName: String,
+    val description: String,
+    val blurRadiusDp: Float
+) {
+    LIGHT(
+        displayName = "Light",
+        description = "Crisp, subtle frosted glass effect with 6 dp blur radius.",
+        blurRadiusDp = 6f
+    ),
+    DEEP(
+        displayName = "Deep",
+        description = "Rich, velvety frosted glass effect with 20 dp blur radius.",
+        blurRadiusDp = 20f
+    )
+}
+
+/**
  * Visual expansion modes for Dynamic Island.
  */
 enum class IslandMode {
     IDLE,
     MEDIA_COMPACT,
+    MEDIA_EXPANDED,
     NOTIFICATION,
-    MEDIA_EXPANDED
+    NOTIFICATION_EXPANDED
+}
+
+/**
+ * Explicit active state representation for Dynamic Island routing.
+ * Ensures the capsule knows whether it is currently displaying Media or Notification,
+ * and whether it is compact or expanded.
+ */
+sealed class IslandActiveState {
+    object Idle : IslandActiveState()
+    data class ShowingMedia(val isExpanded: Boolean = false) : IslandActiveState()
+    data class ShowingNotification(val isExpanded: Boolean = false) : IslandActiveState()
 }
 
 /**
