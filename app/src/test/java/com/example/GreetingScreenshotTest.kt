@@ -25,11 +25,11 @@ class GreetingScreenshotTest {
     fun island_screenshot() {
         composeTestRule.setContent {
             MyApplicationTheme(darkTheme = true) {
-                DynamicIsland(isInteractive = false)
+                com.example.ui.companion.CompanionScreen()
             }
         }
 
-        composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/greeting.png")
+        composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/companion_screen.png")
     }
 }
 
