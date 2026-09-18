@@ -147,17 +147,11 @@ class IslandOverlayService : Service() {
                 }
             }
 
-            // Outside touch listener: intercept ACTION_OUTSIDE to automatically collapse island when tapping outside
+            // Outside touch listener: intercept ACTION_OUTSIDE to verify media status and collapse appropriately
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                    val currentMode = IslandStateManager.islandMode.value
-                    if (currentMode == IslandMode.MEDIA_EXPANDED) {
-                        IslandStateManager.collapseToPill()
-                        return@setOnTouchListener true
-                    } else if (currentMode == IslandMode.NOTIFICATION) {
-                        IslandStateManager.dismissNotificationBanner()
-                        return@setOnTouchListener true
-                    }
+                    IslandStateManager.collapseOnOutsideTap()
+                    return@setOnTouchListener true
                 }
                 false
             }

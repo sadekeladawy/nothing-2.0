@@ -8,6 +8,7 @@ import com.example.model.IslandMode
 import com.example.model.IslandTheme
 import com.example.model.MediaData
 import com.example.model.NotificationData
+import com.example.service.IslandNotificationListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -145,6 +146,8 @@ object IslandStateManager {
 
     /**
      * Updates active media session info.
+     * PlaybackState.STATE_PAUSED keeps the media state active (just updating the UI).
+     * Only clearing media data reverts to Idle.
      */
     fun updateMediaData(media: MediaData?) {
         _mediaData.value = media
@@ -152,12 +155,12 @@ object IslandStateManager {
         if (_activeState.value is IslandActiveState.ShowingNotification) {
             return
         }
-        if (media != null && media.isPlaying) {
+        if (media != null) {
             if (_activeState.value is IslandActiveState.Idle) {
                 _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
                 _islandMode.value = IslandMode.MEDIA_COMPACT
             }
-        } else if (media == null) {
+        } else {
             if (_activeState.value is IslandActiveState.ShowingMedia) {
                 _activeState.value = IslandActiveState.Idle
                 _islandMode.value = IslandMode.IDLE
@@ -201,7 +204,8 @@ object IslandStateManager {
     fun dismissNotificationBanner() {
         notificationDismissJob?.cancel()
         _activeNotification.value = null
-        if (_mediaData.value != null && _mediaData.value?.isPlaying == true) {
+        val currentMedia = _mediaData.value
+        if (currentMedia != null) {
             _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
             _islandMode.value = IslandMode.MEDIA_COMPACT
         } else {
@@ -258,6 +262,52 @@ object IslandStateManager {
     }
 
     /**
+     * Checks if a media session is STILL active (either Playing or Paused).
+     * Verifies both the MediaController / MediaSessionManager and local MediaData.
+     */
+    fun isMediaSessionActive(): Boolean {
+        // 1. Check system MediaController via IslandNotificationListener
+        if (IslandNotificationListener.isMediaActive()) {
+            return true
+        }
+        // 2. Check current tracked media data (active whether playing or paused)
+        return _mediaData.value != null
+    }
+
+    /**
+     * Collapses expanded media player back to compact pill if media is still active (playing or paused),
+     * or to idle if no media is active.
+     */
+    fun collapseExpandedMedia() {
+        if (isMediaSessionActive()) {
+            _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
+            _islandMode.value = IslandMode.MEDIA_COMPACT
+        } else {
+            _activeState.value = IslandActiveState.Idle
+            _islandMode.value = IslandMode.IDLE
+        }
+    }
+
+    /**
+     * Handles ACTION_OUTSIDE outside-tap events on the Dynamic Island.
+     * Instead of unconditionally resetting to Idle, verifies the current media status:
+     * - If a media session is STILL active (either Playing or Paused): transitions back to the compact media pill.
+     * - Only if NO media is active: transitions back to the Idle state.
+     */
+    fun collapseOnOutsideTap() {
+        notificationDismissJob?.cancel()
+        _activeNotification.value = null
+
+        if (isMediaSessionActive()) {
+            _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
+            _islandMode.value = IslandMode.MEDIA_COMPACT
+        } else {
+            _activeState.value = IslandActiveState.Idle
+            _islandMode.value = IslandMode.IDLE
+        }
+    }
+
+    /**
      * Collapses back to compact pill or idle.
      */
     fun collapseToPill() {
@@ -271,7 +321,10 @@ object IslandStateManager {
                 }
             }
             is IslandActiveState.ShowingMedia -> {
-                if (_mediaData.value != null) {
+                collapseExpandedMedia()
+            }
+            is IslandActiveState.Idle -> {
+                if (isMediaSessionActive()) {
                     _activeState.value = IslandActiveState.ShowingMedia(isExpanded = false)
                     _islandMode.value = IslandMode.MEDIA_COMPACT
                 } else {
@@ -279,21 +332,16 @@ object IslandStateManager {
                     _islandMode.value = IslandMode.IDLE
                 }
             }
-            is IslandActiveState.Idle -> {
-                _activeState.value = IslandActiveState.Idle
-                _islandMode.value = IslandMode.IDLE
-            }
         }
     }
 
     /**
-     * Collapses the island back directly to the idle state (e.g. after tapping to open the source app).
+     * Collapses the island back directly:
+     * Verifies if media is active (playing or paused) and returns to compact media pill,
+     * otherwise transitions to idle.
      */
     fun collapseToIdle() {
-        notificationDismissJob?.cancel()
-        _activeNotification.value = null
-        _activeState.value = IslandActiveState.Idle
-        _islandMode.value = IslandMode.IDLE
+        collapseOnOutsideTap()
     }
 
     fun togglePlayPause() {

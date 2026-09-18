@@ -36,7 +36,10 @@ class IslandNotificationListener : NotificationListenerService() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
             super.onPlaybackStateChanged(state)
             val currentState = state?.state
-            if (state == null || currentState == PlaybackState.STATE_STOPPED || currentState == PlaybackState.STATE_NONE) {
+            Log.d(TAG, "Playback state changed: $currentState")
+            // Only PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE, or onSessionDestroyed() clear the media state.
+            // PlaybackState.STATE_PAUSED must KEEP the media state active (updating UI with the play icon).
+            if (currentState == PlaybackState.STATE_STOPPED || currentState == PlaybackState.STATE_NONE) {
                 Log.d(TAG, "Playback state changed to stopped/none ($currentState). Reverting to Idle.")
                 cleanupMediaController()
                 IslandStateManager.clearMediaData()
@@ -60,6 +63,7 @@ class IslandNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        instance = this
         IslandStateManager.setNotificationListenerConnected(true)
         Log.d(TAG, "Notification listener connected successfully")
 
@@ -89,6 +93,9 @@ class IslandNotificationListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        if (instance == this) {
+            instance = null
+        }
         IslandStateManager.setNotificationListenerConnected(false)
         cleanupMediaController()
         sessionsChangedListener?.let {
@@ -96,6 +103,13 @@ class IslandNotificationListener : NotificationListenerService() {
                 mediaSessionManager?.removeOnActiveSessionsChangedListener(it)
             } catch (_: Exception) {
             }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (instance == this) {
+            instance = null
         }
     }
 
@@ -119,31 +133,24 @@ class IslandNotificationListener : NotificationListenerService() {
             return
         }
 
-        // 3. Find if any controller is actively playing
+        // 3. Find target controller:
+        // Prefer playing session, otherwise keep current controller if active/paused, or choose first active session (paused, etc.)
         val preferred = controllers.firstOrNull {
             it.playbackState?.state == PlaybackState.STATE_PLAYING
         }
 
-        if (preferred == null) {
-            // Check if current tracked controller is still playing or active
-            val currentPlaybackState = activeMediaController?.playbackState?.state
-            if (currentPlaybackState == null ||
-                currentPlaybackState == PlaybackState.STATE_STOPPED ||
-                currentPlaybackState == PlaybackState.STATE_NONE
-            ) {
-                Log.d(TAG, "No controllers actively playing and current controller not playing. Resetting UI state to Idle.")
-                cleanupMediaController()
-                IslandStateManager.clearMediaData()
-                return
-            }
-        }
-
-        val targetController = preferred ?: activeMediaController ?: controllers.firstOrNull {
+        val targetController = preferred ?: (
+            if (activeMediaController != null && controllers.any { it.sessionToken == activeMediaController?.sessionToken }) {
+                val s = activeMediaController?.playbackState?.state
+                if (s != PlaybackState.STATE_STOPPED && s != PlaybackState.STATE_NONE) activeMediaController else null
+            } else null
+        ) ?: controllers.firstOrNull {
             val s = it.playbackState?.state
             s != PlaybackState.STATE_STOPPED && s != PlaybackState.STATE_NONE
         }
 
         if (targetController == null) {
+            Log.d(TAG, "No active or paused media controllers found. Resetting UI state to Idle.")
             cleanupMediaController()
             IslandStateManager.clearMediaData()
             return
@@ -183,9 +190,10 @@ class IslandNotificationListener : NotificationListenerService() {
         val playbackState = controller.playbackState
         val state = playbackState?.state
 
-        // If the playback state is stopped or none, revert immediately to Idle
-        if (state == null || state == PlaybackState.STATE_STOPPED || state == PlaybackState.STATE_NONE) {
-            Log.d(TAG, "updateMediaFromController: PlaybackState is null, STOPPED or NONE ($state). Reverting to Idle.")
+        // PlaybackState.STATE_PAUSED must KEEP the media state active (just updating the UI to show the play icon).
+        // Only PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE, or onSessionDestroyed() should clear the media state and revert the island to Idle.
+        if (state == PlaybackState.STATE_STOPPED || state == PlaybackState.STATE_NONE) {
+            Log.d(TAG, "updateMediaFromController: PlaybackState is STOPPED or NONE ($state). Reverting to Idle.")
             cleanupMediaController()
             IslandStateManager.clearMediaData()
             return
@@ -328,6 +336,36 @@ class IslandNotificationListener : NotificationListenerService() {
 
     companion object {
         private const val TAG = "IslandNotifListener"
+
+        @Volatile
+        private var instance: IslandNotificationListener? = null
+
+        /**
+         * Checks if a media session is STILL active (either Playing or Paused).
+         */
+        fun isMediaActive(): Boolean {
+            val listener = instance ?: return false
+            val controller = listener.activeMediaController
+            if (controller != null) {
+                val state = controller.playbackState?.state ?: return false
+                return state != PlaybackState.STATE_STOPPED && state != PlaybackState.STATE_NONE
+            }
+            try {
+                val mgr = listener.mediaSessionManager ?: return false
+                val component = ComponentName(listener, IslandNotificationListener::class.java)
+                val controllers = mgr.getActiveSessions(component)
+                return controllers.any { c ->
+                    val s = c.playbackState?.state
+                    s != null && s != PlaybackState.STATE_STOPPED && s != PlaybackState.STATE_NONE
+                }
+            } catch (_: Exception) {
+                return false
+            }
+        }
+
+        fun getActiveMediaController(): MediaController? {
+            return instance?.activeMediaController
+        }
 
         private val VIDEO_PACKAGES = setOf(
             "com.google.android.youtube",

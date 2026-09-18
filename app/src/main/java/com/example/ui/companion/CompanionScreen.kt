@@ -249,11 +249,7 @@ fun CompanionScreen() {
                                 indication = null
                             ) {
                                 // Tapping outside capsule in preview collapses it back (mirrors WindowManager ACTION_OUTSIDE)
-                                if (islandMode == IslandMode.MEDIA_EXPANDED || islandMode == IslandMode.NOTIFICATION_EXPANDED) {
-                                    IslandStateManager.collapseToPill()
-                                } else if (islandMode == IslandMode.NOTIFICATION) {
-                                    IslandStateManager.dismissNotificationBanner()
-                                }
+                                IslandStateManager.collapseOnOutsideTap()
                             },
                         contentAlignment = Alignment.TopCenter
                     ) {

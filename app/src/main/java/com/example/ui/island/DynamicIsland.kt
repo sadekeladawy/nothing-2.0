@@ -112,10 +112,10 @@ fun DynamicIsland(
     // Explicit Transition to coordinate bounds morphing independently of content layout
     val transition = updateTransition(targetState = mode, label = "dynamic_island_transition")
 
-    // Spring specification for authentic Apple fluid physics: dampingRatio = 0.6f, stiffness = 300f
+    // Spring specification for authentic Apple fluid bouncy physics: dampingRatio = 0.5f, stiffness = 400f
     val springSpec = spring<androidx.compose.ui.unit.Dp>(
-        dampingRatio = 0.6f,
-        stiffness = 300f
+        dampingRatio = 0.5f,
+        stiffness = 400f
     )
 
     val capsuleWidth by transition.animateDp(
@@ -147,8 +147,8 @@ fun DynamicIsland(
     val cornerRadius by transition.animateDp(
         transitionSpec = {
             spring(
-                dampingRatio = 0.6f,
-                stiffness = 300f
+                dampingRatio = 0.5f,
+                stiffness = 400f
             )
         },
         label = "capsule_corner_radius"
@@ -230,16 +230,16 @@ fun DynamicIsland(
         AnimatedVisibility(
             visible = !shouldHideIsland,
             enter = fadeIn(
-                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+                animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)
             ) + scaleIn(
                 initialScale = 0.8f,
-                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+                animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)
             ),
             exit = fadeOut(
-                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+                animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)
             ) + scaleOut(
                 targetScale = 0.8f,
-                animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+                animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)
             )
         ) {
             // Shadow/glow aura
@@ -374,7 +374,7 @@ fun DynamicIsland(
                                             pendingIntent = mediaData?.launchIntent,
                                             packageName = mediaData?.packageName
                                         )
-                                        IslandStateManager.collapseToIdle()
+                                        IslandStateManager.collapseExpandedMedia()
                                     }
                                 }
                             )
@@ -631,7 +631,7 @@ private fun ExpandedNotificationIsland(
     AnimatedVisibility(
         visible = contentVisible,
         enter = fadeIn(animationSpec = tween(160, easing = LinearOutSlowInEasing)) +
-                scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f)),
+                scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)),
         exit = fadeOut(animationSpec = tween(80))
     ) {
         Column(
@@ -758,7 +758,7 @@ private fun ExpandedMediaIsland(
     AnimatedVisibility(
         visible = contentVisible,
         enter = fadeIn(animationSpec = tween(160, easing = LinearOutSlowInEasing)) +
-                scaleIn(initialScale = 0.95f, animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f)),
+                scaleIn(initialScale = 0.95f, animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)),
         exit = fadeOut(animationSpec = tween(80))
     ) {
         Column(
@@ -967,8 +967,8 @@ private fun ExpandedMediaIsland(
                     val playButtonScale by animateFloatAsState(
                         targetValue = if (isPlaying) 1.05f else 1.0f,
                         animationSpec = spring(
-                            dampingRatio = 0.6f,
-                            stiffness = 300f
+                            dampingRatio = 0.5f,
+                            stiffness = 400f
                         ),
                         label = "play_button_scale"
                     )
